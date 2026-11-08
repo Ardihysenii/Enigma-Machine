@@ -98,3 +98,29 @@ The college page uses a graphite, ivory and champagne editorial design with hori
 There are exactly six selectable identities: Ardi (s001), Arditi (s002), Donarti (s003), Albi (s004), Enes (s005), and Profesori (p001). Programming and p002 have been removed from active data and selectors. Each student has one fictional grade for Siguria e informacionit, so the unrestricted table shows five unique students once each; own-grade view shows one. This simplification was explicitly approved by the user after explaining the loss of a second-course comparison.
 
 Metrics are derived only from grade rows returned for the current view, not hidden or unauthorized records. They clear on denial, logout, expiry or connection failure. Avatars use local initials. Responsive CSS is included, with no external fonts or image services.
+
+
+## Vercel: public fictional-data demo
+
+Vercel automatically detects `app.py` and exposes the Flask app. When `VERCEL=1`,
+ENIGMA uses the platform temporary directory (`/tmp/enigma-lab`), permits remote
+requests only on the exact platform-provided deployment/production hostnames,
+and uses HTTPS-only session cookies. Same-origin POST validation, CSP, input
+limits, per-browser separation and local-mode loopback restrictions remain.
+For a custom domain set `ENIGMA_PUBLIC_HOST` to the bare hostname.
+
+Recommended: set `ENIGMA_SECRET_KEY` to a randomly generated secret of at least
+32 characters in Vercel Environment Variables, then redeploy. Never commit it.
+Without it, a fresh cryptographically random key is used per process: cold
+starts/instance changes invalidate browser sessions. Even with a stable secret,
+state is still **temporary and instance-local**, not shared durable storage.
+
+This deployment is a disposable learning demo, NOT a real college portal. All
+identities are freely selectable. Grades, policy, audits, token enrollment,
+challenges and download registrations may reset or differ across instances.
+A token challenge may be lost between requests; re-enroll/retry or use the local
+application for a consistent full presentation. Downloads may become unavailable.
+Do not enter real data or credentials. Durable cross-instance behavior requires
+an external state store and a deliberate security design; `/tmp` does not supply it.
+
+Local launchers retain their original on-disk storage and loopback-only behavior.
