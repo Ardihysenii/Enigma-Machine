@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import time
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from cryptography import x509
@@ -15,7 +16,10 @@ from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.x509.oid import NameOID
 from werkzeug.security import generate_password_hash, check_password_hash
 
-ROOT = Path(__file__).resolve().parent / 'lab-material'
+# Vercel's deployed source tree is read-only. Only /tmp is writable.
+CLOUD_DEMO = os.environ.get('VERCEL') == '1'
+ROOT = (Path(tempfile.gettempdir()) / 'enigma-lab' if CLOUD_DEMO
+        else Path(__file__).resolve().parent / 'lab-material')
 TASKS = {k: {'name': v, 'implemented': True} for k, v in {
     'analysis': 'Security requirements', 'classical': 'Classical cipher',
     'rsa': 'RSA encryption', 'signatures': 'Digital signatures',
