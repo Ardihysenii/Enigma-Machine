@@ -1,24 +1,43 @@
 """ENIGMA loopback-only educational laboratory, not a production service."""
 import secrets
+import os
+import re
 import json
 import threading
 import time
 from flask import Flask, jsonify, render_template, request, send_file, session
-from services import ROOT, TASKS, run_task
+from services import ROOT, TASKS, run_task, CLOUD_DEMO
 
-# Keep the signing secret local so this browser can reload its analysis after restart.
-# This is a lab session secret, never a production credential or submitted artifact.
-ROOT.mkdir(parents=True, exist_ok=True)
-secret_file = ROOT / '.session-secret'
-try:
-    with secret_file.open('xb') as output:
-        output.write(secrets.token_bytes(32))
-except FileExistsError:
-    pass
+# Local mode preserves its existing on-disk session secret. Cloud mode never
+# writes into deployed source, and never uses a public/predictable signing key.
+if CLOUD_DEMO:
+    secret_key = os.environ.get('ENIGMA_SECRET_KEY')
+    if secret_key and len(secret_key) < 32:
+        raise RuntimeError('ENIGMA_SECRET_KEY must contain at least 32 characters.')
+    secret_key = secret_key or secrets.token_bytes(32)
+    trusted_hosts = ['127.0.0.1', 'localhost']
+    for variable in ('VERCEL_URL', 'VERCEL_BRANCH_URL', 'VERCEL_PROJECT_PRODUCTION_URL',
+                     'ENIGMA_PUBLIC_HOST'):
+        host = os.environ.get(variable, '').strip().lower()
+        if host:
+            if not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?', host):
+                raise RuntimeError(f'{variable} must be a hostname without a scheme or path.')
+            trusted_hosts.append(host)
+else:
+    ROOT.mkdir(parents=True, exist_ok=True)
+    secret_file = ROOT / '.session-secret'
+    try:
+        with secret_file.open('xb') as output:
+            output.write(secrets.token_bytes(32))
+    except FileExistsError:
+        pass
+    secret_key = secret_file.read_bytes()
+    trusted_hosts = ['127.0.0.1', 'localhost']
 app = Flask(__name__)
-app.config.update(MAX_CONTENT_LENGTH=32 * 1024, SECRET_KEY=secret_file.read_bytes(),
+app.config.update(MAX_CONTENT_LENGTH=32 * 1024, SECRET_KEY=secret_key,
+                  CLOUD_DEMO=CLOUD_DEMO, SESSION_COOKIE_SECURE=CLOUD_DEMO,
                   SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
-                  TRUSTED_HOSTS=['127.0.0.1', 'localhost'])
+                  TRUSTED_HOSTS=trusted_hosts)
 STATES = {}
 LOCK = threading.RLock()
 
@@ -51,7 +70,7 @@ def lab_state():
 
 @app.before_request
 def local_request_only():
-    if request.remote_addr not in ('127.0.0.1', '::1'):
+    if not CLOUD_DEMO and request.remote_addr not in ('127.0.0.1', '::1'):
         return jsonify(error='This laboratory accepts loopback requests only.'), 403
     if request.method == 'POST':
         origin = request.headers.get('Origin')
@@ -76,7 +95,8 @@ def home():
 
 @app.get('/api/health')
 def health():
-    return jsonify(status='ok', application='ENIGMA', mode='local-learning-laboratory',
+    return jsonify(status='ok', application='ENIGMA', mode='public-fictional-data-demo' if CLOUD_DEMO else 'local-learning-laboratory',
+                   storage='temporary-per-instance' if CLOUD_DEMO else 'local-files',
                    cryptography_implemented=True)
 
 
