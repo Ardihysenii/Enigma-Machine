@@ -1,0 +1,32 @@
+/* Overview enhancement only; no task operations are changed. */
+#overview{position:relative;isolation:isolate}
+#overview .heading-row{position:relative;padding:22px 0 12px}
+#overview .heading-row:before{content:'';position:absolute;inset:-35px -15px;z-index:-1;pointer-events:none;background:radial-gradient(ellipse at 80% 45%,#9ec0db14,transparent 58%)}
+#overview .ring-a{animation:ov-orbit 48s linear infinite;border-color:#87aac7;border-style:dashed}
+#overview .ring-b{animation:ov-orbit 32s linear infinite reverse;border-top-color:#a7cceb;border-bottom-color:#587d9c}
+#overview .ring-c{animation:ov-breathe 5s ease-in-out infinite}
+#overview .art-core{text-shadow:0 0 30px #9ec0db55}
+#overview .ring-a:after{content:'';position:absolute;top:19%;left:8%;width:7px;height:7px;border-radius:50%;background:#a8cdeb;box-shadow:0 0 15px #a3cbec}
+.ov-toolbar{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:10px}
+.ov-toolbar .eyebrow{margin:0}.ov-motion{background:transparent;color:#8ca7bd;border:1px solid #344254;border-radius:20px;padding:7px 12px;font:10px var(--mono)}
+.ov-signal{display:grid;grid-template-columns:1fr auto;align-items:center;gap:25px;border:1px solid #3e576c;border-radius:5px;background:linear-gradient(110deg,#212934,#131a23);padding:23px 25px;margin-bottom:28px;position:relative;overflow:hidden}
+.ov-signal:before{content:'';position:absolute;top:0;left:0;width:28%;height:1px;background:linear-gradient(90deg,transparent,#a7ccea,transparent);animation:ov-trace 7s linear infinite}
+.ov-signal .eyebrow{font-size:8px;margin-bottom:8px}.ov-message{font:clamp(18px,2vw,28px)/1.4 var(--mono);letter-spacing:3px;color:#c4dbed;min-height:40px;margin:0;overflow-wrap:anywhere}
+.ov-caption{color:#7a99b2;font-size:11px;margin:8px 0 0}.ov-actions{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.ov-actions a{white-space:nowrap}
+#overview .task-card{overflow:hidden;transition:transform .25s,border-color .25s,box-shadow .25s}
+#overview .task-card:before{content:'';pointer-events:none;position:absolute;inset:0;background:linear-gradient(120deg,transparent 20%,#b8d5ec0a 45%,transparent 65%);transform:translateX(-110%);transition:transform .65s}
+#overview .task-card:hover:before{transform:translateX(110%)}
+#overview .task-card:hover{box-shadow:0 14px 30px #0003;transform:translateY(-5px)}
+#overview .task-icon,#overview .card-arrow{transition:transform .25s}
+#overview .task-card:hover .task-icon{transform:rotate(-7deg)}#overview .task-card:hover .card-arrow{transform:translate(3px,-3px)}
+#overview .ov-enter{animation:ov-enter .65s both;animation-delay:var(--ov-delay,0ms)}
+#overview.ov-paused *,#overview.ov-paused *:before,#overview.ov-paused *:after{animation-play-state:paused!important}
+@keyframes ov-orbit{to{transform:rotate(360deg)}}
+@keyframes ov-breathe{50%{opacity:.45;transform:scale(.94)}}
+@keyframes ov-trace{from{left:-30%}to{left:110%}}
+@keyframes ov-enter{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:1000px){.ov-signal{grid-template-columns:1fr;gap:16px}}
+@media(max-width:480px){.ov-signal{padding:20px 16px}.ov-toolbar{align-items:flex-start}.ov-message{letter-spacing:1px}.ov-toolbar .eyebrow{max-width:190px}}
+@media(prefers-reduced-motion:reduce){#overview *,#overview *:before,#overview *:after{animation:none!important;transition:none!important}}
+
+.ov-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
