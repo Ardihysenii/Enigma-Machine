@@ -34,6 +34,8 @@
 <div class="shell">
   <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumb">Overview</strong></div><span id="connection" class="connection" role="status">Checking Python…</span></header>
   <main id="main" tabindex="-1">
+    {% if config.CLOUD_DEMO %}<div class="notice" role="note"><div><strong>Public demonstration · fictional data only</strong><p>Temporary serverless storage: identities, grades, rules, tokens, audit records and download links can reset or differ between server instances. Retry or re-enroll if your session resets. No real records, passwords or PINs. This is not a production authentication system.</p></div></div>{% endif %}
+
     <section id="overview" class="view">
       <div class="ov-toolbar"><div class="eyebrow">THE CODEBREAKING ROOM / SIX CONNECTED MISSIONS</div><button type="button" class="ov-motion" id="ov-motion" aria-pressed="false">Pause motion</button></div>
       <div class="heading-row"><div><h1>Every message<br><em>has a hidden story.</em></h1><p class="intro">A codebreaking-inspired laboratory. Trace a letter, reveal the mathematics,<br class="desktop-break"> and follow the evidence from input to recovered message.</p></div><div class="cipher-art" aria-hidden="true"><div class="ring ring-a"></div><div class="ring ring-b"></div><div class="ring ring-c"></div><span class="art-core">E</span><span class="art-key">A → 0 &nbsp; Z → 25</span></div></div>
