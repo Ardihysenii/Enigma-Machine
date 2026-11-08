@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark"><title>ENIGMA — Cryptography laboratory</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='codebreaker1') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='policy.css', v='codebreaker1') }}">
+  <script src="{{ url_for('static', filename='policy.js', v='codebreaker1') }}" defer></script>
+  <script src="{{ url_for('static', filename='app.js', v='20261108-six1') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='cipher-presentation.css', v='codebreaker1') }}">
+  <script src="{{ url_for('static', filename='cipher-presentation.js', v='codebreaker1') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='overview.css', v='20261108-1') }}">
+  <script src="{{ url_for('static', filename='overview.js', v='20261108-1') }}" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to workspace</a>
+<aside class="sidebar" aria-label="Main navigation">
+  <a class="brand" href="#overview" aria-label="ENIGMA home"><span class="brand-symbol" aria-hidden="true">E<span>↗</span></span><span>ENIGMA<small>CODEBREAKING LAB</small></span></a>
+  <p class="nav-label">YOUR WORKSPACE</p>
+  <nav id="navigation"><a class="nav-item active" href="#overview"><span class="nav-number">⌂</span>Overview</a>
+    <p class="phase-label">PHASE I · FOUNDATIONS</p>
+    <a class="nav-item" href="#analysis"><span class="nav-number">01</span>Security requirements</a>
+    <a class="nav-item" href="#classical"><span class="nav-number">02</span>Classical cipher</a>
+    <p class="phase-label">PHASE II · TRUST & VERIFICATION</p>
+    <a class="nav-item" href="#rsa"><span class="nav-number">03</span>RSA encryption</a>
+    <a class="nav-item" href="#signatures"><span class="nav-number">04</span>Digital signatures</a>
+    <p class="phase-label">PHASE III · KEYS & IDENTITY</p>
+    <a class="nav-item" href="#packaging"><span class="nav-number">05</span>Keys & certificates</a>
+    <a class="nav-item" href="#authentication"><span class="nav-number">06</span>Token authentication</a>
+  </nav>
+  <div class="sidebar-note"><span class="small-dot"></span>LOCAL LEARNING ENVIRONMENT<p>Fictional data. Disposable keys.<br>Real understanding.</p></div>
+  <footer>ENIGMA / Information Security<br><span>Presentation laboratory · v0.3</span></footer>
+</aside>
+<div class="shell">
+  <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumb">Overview</strong></div><span id="connection" class="connection" role="status">Checking Python…</span></header>
+  <main id="main" tabindex="-1">
+    <section id="overview" class="view">
+      <div class="ov-toolbar"><div class="eyebrow">THE CODEBREAKING ROOM / SIX CONNECTED MISSIONS</div><button type="button" class="ov-motion" id="ov-motion" aria-pressed="false">Pause motion</button></div>
+      <div class="heading-row"><div><h1>Every message<br><em>has a hidden story.</em></h1><p class="intro">A codebreaking-inspired laboratory. Trace a letter, reveal the mathematics,<br class="desktop-break"> and follow the evidence from input to recovered message.</p></div><div class="cipher-art" aria-hidden="true"><div class="ring ring-a"></div><div class="ring ring-b"></div><div class="ring ring-c"></div><span class="art-core">E</span><span class="art-key">A → 0 &nbsp; Z → 25</span></div></div>
+      <section class="ov-signal" aria-label="Interactive codebreaking preview"><div><p class="eyebrow">INTERCEPTED SIGNAL / TRY THE REVEAL</p><p id="ov-message" class="ov-message" aria-hidden="true">HYHUB PHVVDJH KDV D VWRUB</p><span id="ov-status" class="ov-sr" role="status">Encrypted preview ready.</span><p id="ov-caption" class="ov-caption">Caesar / shift +3 · A small browser-only preview, not a Python operation.</p></div><div class="ov-actions"><button type="button" class="primary" id="ov-reveal">Reveal the message →</button><a class="secondary" href="#classical">Enter cipher lab ↗</a></div></section>
+      <div class="notice"><span class="notice-icon" aria-hidden="true">i</span><div><strong>Inspired by codebreaking. Built for understanding.</strong><p>Atmosphere inspired by The Imitation Game; operations use the algorithms named in each workspace. Caesar and Vigenère are not a simulation of the historical Enigma rotor machine.</p></div></div>
+      <div class="stats"><div><span class="stat-value">06</span><span>Assignment tasks</span></div><div><span class="stat-value">03</span><span>Learning phases</span></div><div><span class="stat-value">06</span><span>Task implementations</span></div><div><span class="stat-value stat-date">18 NOV</span><span>2026 · Submission deadline</span></div></div>
+      <div class="section-heading"><div><p class="eyebrow">THE LEARNING PATH</p><h2>Choose your workspace</h2></div><span class="muted">Built around the teacher’s six tasks</span></div>
+      <div id="task-cards" class="task-grid"></div>
+      <div class="bottom-grid"><article class="info-card"><p class="eyebrow">HOW THE PIECES CONNECT</p><h3>Interface → Python → evidence</h3><p>The browser collects a request. Flask validates it and calls the task module. Python performs the selected operation and returns its actual result for display.</p><div class="flow"><span>HTML / CSS / JS</span><b>→</b><span>Flask API</span><b>→</b><span>Python task</span></div></article><article class="info-card tinted"><p class="eyebrow">KEEP THE BOUNDARIES CLEAR</p><h3>Learn safely. Explain confidently.</h3><p>The A–Z alphabet belongs to the classical cipher. RSA and signatures operate on bytes. A signature checks a key relationship—not a person’s identity by itself.</p><a href="#classical" class="text-link">Explore the classical workspace <span>→</span></a></article></div>
+    </section>
+    <section id="task-view" class="view" hidden>
+      <a class="back-link" href="#overview">← Back to overview</a>
+      <div class="task-heading"><div><p id="task-phase" class="eyebrow"></p><h1 id="task-title"></h1><p id="task-description" class="intro"></p></div><span class="pill">Implementation pending</span></div>
+      <div class="workspace-grid"><article class="panel"><div class="panel-heading"><span id="workspace-number" class="workspace-number"></span><div><h2 id="workspace-title">Task workspace</h2><p>Input → Python operation → actual result</p></div></div>
+        <form id="task-form"><label for="message" id="message-label">Fictional sample message</label><textarea id="message" maxlength="2000" rows="5" placeholder="Use fictional content only. No private keys, PINs or personal records."></textarea><div class="field-meta"><span>Fictional messages only. Use designated fields for disposable lab credentials.</span><span id="character-count">0 / 2000</span></div><div id="classical-options" hidden class="form-row"><div><label for="cipher">Cipher</label><select id="cipher"><option value="caesar">Caesar</option><option value="vigenere">Vigenère</option></select></div><div><label for="operation">Operation</label><select id="operation"><option value="encrypt">Encrypt</option><option value="decrypt">Decrypt</option></select></div></div><div class="form-actions"><button type="submit" class="primary" id="run-button">Run operation <span>→</span></button><button type="button" id="clear-button" class="secondary">Clear</button></div></form>
+        <div class="result-heading"><h3>Response</h3><span id="response-status" class="muted">Not run</span></div><div id="result" class="result" role="status" aria-live="polite">Run this task to display actual Python results.</div>
+      </article><aside class="requirements"><div class="panel"><p class="eyebrow">REQUIRED BY THE BRIEF</p><h2>What this task must prove</h2><ul id="requirements-list" class="requirement-list"></ul></div><div class="scope-note"><strong>Local laboratory boundary</strong><p>Python runs each operation locally. Private keys stay on the server; credential fields accept disposable laboratory values only. Token authentication is a software simulation, not a real smart card.</p></div></aside>{% include 'cipher-stage.html' %}</div>
+      <article id="college-policy-panel" class="panel" hidden>
+        <div class="policy-heading"><div><p class="eyebrow">01 / LIVE SECURITY CONTROLS</p><h2>College security measures</h2><p class="policy-copy">Switch controls off to expose the fictional college's weaknesses. Apply the measures, then test the same actions again. Every restriction is enforced by Python.</p></div><a href="/college" target="_blank" rel="noopener" class="secondary">Open college dashboard →</a></div>
+        <p class="policy-copy">Local lab with fictional identities. You are the operator: identity selection and policy changes are deliberately available for demonstration, not production authentication. Grade edits affect this browser session only and reset after server restart.</p>
+        <form id="college-policy-form"><label class="policy-choice"><input type="checkbox" id="student_own_grades_only"><span><strong>01 / Students see only their own grades</strong><small>Confidentiality · other-student and all-grade requests return HTTP 403.</small></span></label>
+<label class="policy-choice"><input type="checkbox" id="block_student_professor_area"><span><strong>02 / Professor area is restricted</strong><small>Role-based access · students receive HTTP 403 for the page and its data.</small></span></label>
+<label class="policy-choice"><input type="checkbox" id="block_student_grade_edit"><span><strong>03 / Students cannot change grades</strong><small>Integrity · a student’s grade-update request is rejected by Python.</small></span></label>
+<label class="policy-choice"><input type="checkbox" id="professor_assigned_courses_only"><span><strong>04 / Professors access only their assigned course</strong><small>Least privilege · scope is enforced; this demo now has one course, so no second-course comparison is available.</small></span></label>
+<label class="policy-choice"><input type="checkbox" id="session_inactivity_timeout"><span><strong>05 / Expire inactive college sessions after 30 seconds</strong><small>Session security · background polling does not keep a session alive.</small></span></label>
+<label class="policy-choice"><input type="checkbox" id="audit_professor_only"><span><strong>06 / Only professors can read college audit records</strong><small>Audit confidentiality · student requests return HTTP 403.</small></span></label>
+          <div class="form-actions"><button type="submit" class="primary" id="apply-college-policy" disabled>Apply security rules →</button><button type="button" class="secondary" id="reload-college-policy">Reload active rules</button><button type="button" class="secondary" id="enable-all-controls">Select all</button><button type="button" class="secondary" id="disable-all-controls">Deselect all</button></div>
+        </form><p id="college-policy-status" role="status" aria-live="polite">Reading security controls…</p>
+        <p class="policy-copy">Select all / Deselect all changes the switches only; click Apply to enforce them. For inactivity testing, enable the timeout and leave the college page without actions for 30 seconds. Status checks do not count as activity.</p>
+      </article>
+      <section id="cipher-evidence" hidden aria-label="Cipher results and calculation tables">
+  <div class="evidence-heading"><div><p class="eyebrow">03 / FOLLOW THE EVIDENCE</p><h2>The message, made visible.</h2></div><button type="button" id="presentation-toggle" class="secondary" aria-pressed="false">Presentation focus ↗</button></div>
+  <div id="cipher-stale" class="stale-notice" hidden>Inputs have changed. The evidence below belongs to your previous run. Run the cipher again to update it.</div>
+  <div class="message-pair"><article class="panel"><span class="eyebrow">PLAINTEXT</span><p id="cipher-plaintext" class="message-text">—</p></article><article class="panel"><span class="eyebrow">CIPHERTEXT</span><p id="cipher-ciphertext" class="message-text">—</p></article></div>
+  <article class="panel ribbon-panel"><div class="section-heading"><h3>Read the signal, letter by letter</h3><span id="ribbon-caption" class="muted">A–Z letters advance the key. Other characters pass through unchanged.</span></div><div class="ribbon-label">INPUT</div><div id="cipher-input-ribbon" class="letter-ribbon"></div><div class="ribbon-label">OUTPUT</div><div id="cipher-output-ribbon" class="letter-ribbon"></div></article>
+  <article class="panel calculation-panel"><div class="section-heading"><div><p class="eyebrow">THE WORKING / MODULO 26</p><h2>Every calculation. Nothing hidden.</h2></div><span id="calculation-count" class="muted"></span></div><div class="calculation-scroll"><table id="cipher-calculations"><caption>Per-letter calculations returned by Python. Select a row to inspect that letter.</caption><thead><tr><th scope="col">Step</th><th scope="col">Input</th><th scope="col">A–Z index</th><th scope="col">Key shift</th><th scope="col">Calculation</th><th scope="col">Output</th></tr></thead><tbody id="cipher-calculation-body"></tbody></table></div></article>
+  <div class="verification-grid"><article class="panel recovery-panel"><p class="eyebrow">04 / CLOSE THE LOOP</p><h2 id="recovery-heading">Inverse check</h2><p id="cipher-recovered" class="message-text">—</p><p id="recovery-explanation"></p></article><article class="panel limitation-panel"><p class="eyebrow">THE CODEBREAKER'S WARNING</p><h2>Understand the weakness.</h2><p id="cipher-weakness"></p><p id="cipher-key-management"></p></article></div>
+  <details class="raw-evidence"><summary>Inspect the original Python response</summary><pre id="cipher-raw"></pre></details>
+</section>
+      <article id="alphabet-panel" class="panel alphabet-panel" hidden><div class="section-heading"><div><p class="eyebrow">FROM YOUR TEACHER’S LECTURE</p><h2>The alphabet reference / A–Z</h2></div><span class="muted">Classical ciphers only</span></div><div id="alphabet" class="alphabet"></div><p class="muted">A = 0 through Z = 25 · Arithmetic modulo 26 · Classical ciphers are educational, not protection for real college records.</p></article>
+      <article class="info-card next-step"><p class="eyebrow">YOUR GROUP’S NEXT STEP</p><h3 id="next-title"></h3><p id="next-description"></p><p class="muted">Record actual tests only. The report and defense must distinguish your work from acknowledged AI assistance.</p></article>
+    </section>
+    <noscript><div class="notice">Enable JavaScript to use the task navigation and Python connection checks.</div></noscript>
+    <footer class="main-footer"><span>ENIGMA · A cryptography learning workspace</span><span>No real records. No real credentials.</span></footer>
+  </main>
+</div>
+</body></html>
