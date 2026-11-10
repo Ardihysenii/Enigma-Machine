@@ -1,3 +1,12 @@
+# November 10, 2026 portal and design checks
+
+- Full regression suite: **67 tests passed**, including existing cryptography, cipher presentation, college policy and hosting tests.
+- New PostgreSQL tests used a unique temporary schema in Neon, removed after testing. Covered signup restricted to students, password/session token hashing, signin/signout and replay of revoked tokens, CSRF enforcement, admin role assignment and session revocation, two-course professor restrictions, own-student visibility, grade validation, audit permissions, expiry, and isolation from Task 01 switches.
+- Actual enigma_portal migration applied separately; starter administrator signin and administration access verified through the local Flask application connected to Neon. No integration-test students/grades were added to the actual portal schema.
+- JavaScript syntax checks passed for portal.js, app.js and college.js. Desktop/mobile static render review completed for the new account page and lab overview/cipher layout. Static render fixtures do not constitute browser end-to-end interaction tests.
+- No Vercel deployment/status checks performed. User confirmed the Production database variable was saved. Hosted account flow not yet verified.
+- Earlier check records follow.
+
 # ENIGMA verification — 8 November 2026
 
 ## Executed locally
