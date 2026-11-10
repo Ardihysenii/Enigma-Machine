@@ -112,7 +112,7 @@ el('edit-form').addEventListener('submit',async event=>{
   }catch(error){message('Ruajtja nuk u konfirmua nga serveri.','error');}
   finally{busy=false;el('save-grade').disabled=false;}
 });
-for(const name of views)el('view-'+name).addEventListener('click',()=>{if(busy)return;view=name;history.replaceState(null,'',name==='professor'?'/college/professor':'/college');void loadView();});
+for(const name of views)el('view-'+name).addEventListener('click',()=>{if(busy)return;view=name;history.replaceState(null,'',name==='professor'?'/college/demo/professor':'/college/demo');void loadView();});
 el('refresh').addEventListener('click',()=>{if(!busy)void loadView();});
 el('grade-target').addEventListener('change',()=>{if(!busy)void loadView();});
 window.addEventListener('focus',()=>void refreshStatus());

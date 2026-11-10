@@ -147,6 +147,8 @@ def too_large(_error):
 app.extensions['enigma_lab'] = {'state': lab_state, 'lock': LOCK}
 from college import college
 app.register_blueprint(college)
+from portal import portal
+app.register_blueprint(portal)
 
 
 if __name__ == '__main__':
