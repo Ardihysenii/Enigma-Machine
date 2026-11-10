@@ -1,4 +1,4 @@
-"""Database-backed college accounts. Task 01's fictional policy lab is separate."""
+"""Database-backed fictional college accounts with explicit educational lab controls."""
 import hashlib
 import os
 import re
@@ -11,12 +11,13 @@ from functools import wraps
 import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+from portal_policy import policy, validate_rules, IDLE_SECONDS
 from flask import Blueprint, current_app, jsonify, render_template, request
 from werkzeug.security import check_password_hash, generate_password_hash
 
 portal = Blueprint('portal', __name__)
 SESSION_HOURS = 12
-IDLE_MINUTES = 30
 DUMMY_PASSWORD_HASH = generate_password_hash(secrets.token_urlsafe(24))
 
 
@@ -103,9 +104,16 @@ def current_actor(connection, touch=False):
     if not re.fullmatch(r'[A-Za-z0-9_-]{64}', token):
         return None
     digest = hashlib.sha256(token.encode()).hexdigest()
+    idle_enabled = policy(connection)['rules']['session_inactivity_timeout']
+    # Once expiry is observed, revoke the persisted token permanently. A later
+    # lab-policy change must never bring this session back to life.
+    connection.execute('''DELETE FROM sessions WHERE token_hash=%s AND
+        (expires_at<=now() OR (%s AND last_seen<=now()-(%s * interval '1 second')))''',
+        (digest, idle_enabled, IDLE_SECONDS))
     row = connection.execute('''SELECT u.id,u.name,u.email,u.role FROM sessions s JOIN users u ON u.id=s.user_id
         WHERE s.token_hash=%s AND u.active AND s.expires_at>now()
-        AND s.last_seen>now()-interval '30 minutes' ''', (digest,)).fetchone()
+        AND (NOT %s OR s.last_seen>now()-(%s * interval '1 second')) ''',
+        (digest, idle_enabled, IDLE_SECONDS)).fetchone()
     if row and touch:
         connection.execute('UPDATE sessions SET last_seen=now() WHERE token_hash=%s', (digest,))
     return row
@@ -116,7 +124,8 @@ def auth_response(connection, actor):
     if old:
         connection.execute('DELETE FROM sessions WHERE token_hash=%s', (hashlib.sha256(old.encode()).hexdigest(),))
     # Expiry/revocation are checked in PostgreSQL, not trusted from a client claim.
-    connection.execute("DELETE FROM sessions WHERE expires_at<=now() OR last_seen<=now()-interval '30 minutes'")
+    connection.execute("DELETE FROM sessions WHERE expires_at<=now() OR (%s AND last_seen<=now()-(%s * interval '1 second'))",
+                       (policy(connection)['rules']['session_inactivity_timeout'], IDLE_SECONDS))
     token = secrets.token_urlsafe(48)
     connection.execute('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(%s,%s,%s)',
                        (hashlib.sha256(token.encode()).hexdigest(), actor['id'], datetime.now(timezone.utc)+timedelta(hours=SESSION_HOURS)))
@@ -133,7 +142,7 @@ def endpoint(roles=None):
         def wrapped(*args, **kwargs):
             try:
                 with database() as connection:
-                    actor = current_actor(connection, touch=True)
+                    actor = current_actor(connection, touch=not (request.endpoint in ('portal.dashboard', 'portal.professor_area') and request.args.get('poll') == '1'))
                     if not actor:
                         return jsonify(error='Sign in to continue.'), 401
                     if roles and actor['role'] not in roles:
@@ -174,13 +183,33 @@ def session_status():
         try:
             with database() as connection:
                 actor = current_actor(connection)
-                # Detect a missing migration even if the visitor has no session.
+                # Detect a missing policy migration even for a fresh visitor.
+                policy(connection)
                 connection.execute('SELECT version FROM schema_versions WHERE version=1').fetchone()
         except (psycopg.Error, RuntimeError):
             return jsonify(error='The account database is unavailable. Please retry shortly.', configured=False), 503
     response = jsonify(actor=actor_json(actor) if actor else None, csrfToken=csrf, configured=ready)
     set_cookie(response, 'csrf', csrf, SESSION_HOURS*3600)
     return response
+
+
+@portal.get('/api/portal/policy')
+@portal.post('/api/portal/policy')
+def lab_policy():
+    # Deliberately available to the lab operator without account authentication.
+    # POST is still protected by the blueprint's double-submit CSRF check.
+    try:
+        rules = validate_rules(read_payload(('rules',))['rules']) if request.method == 'POST' else None
+        with database() as connection:
+            if rules is not None:
+                connection.execute('UPDATE lab_policy SET rules=%s,revision=revision+1,updated_at=now() WHERE singleton=true', (Jsonb(rules),))
+                connection.execute("INSERT INTO audit_events(actor_name,action,allowed,target) VALUES('Lab operator (demo)','lab_policy_changed',true,%s)",
+                                   (','.join(key + '=' + str(value).lower() for key, value in rules.items())[:254],))
+            return jsonify(policy(connection))
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+    except (psycopg.Error, RuntimeError):
+        return jsonify(error='The account database is unavailable. Please retry shortly.'), 503
 
 
 def limit_key(prefix, identity):
@@ -270,33 +299,55 @@ def signout(connection, actor):
 @portal.get('/api/portal/dashboard')
 @endpoint()
 def dashboard(connection, actor):
+    return dashboard_response(connection, actor)
+
+
+@portal.get('/api/portal/professor')
+@endpoint()
+def professor_area(connection, actor):
+    if actor['role'] == 'student' and policy(connection)['rules']['block_student_professor_area']:
+        audit(connection, actor, 'access_denied', False, request.path)
+        return jsonify(error='Your role does not allow this action.'), 403
+    return dashboard_response(connection, actor)
+
+
+def dashboard_response(connection, actor):
+    controls = policy(connection)
+    rules = controls['rules']
     condition, params = '', []
-    if actor['role'] == 'student':
+    if actor['role'] == 'student' and rules['student_own_grades_only']:
         condition, params = 'WHERE e.student_id=%s', [actor['id']]
-    elif actor['role'] == 'professor':
+    elif actor['role'] == 'professor' and rules['professor_assigned_courses_only']:
         condition, params = 'WHERE EXISTS(SELECT 1 FROM teaching_assignments a WHERE a.user_id=%s AND a.course_id=e.course_id)', [actor['id']]
     rows = connection.execute('''SELECT e.student_id AS "studentId", u.name AS "studentName", u.email AS "studentEmail",
         c.id AS "courseId",c.code AS "courseCode",c.title AS "courseTitle",g.grade
         FROM enrollments e JOIN users u ON u.id=e.student_id JOIN courses c ON c.id=e.course_id
         LEFT JOIN grades g ON g.student_id=e.student_id AND g.course_id=e.course_id ''' + condition + ' ORDER BY c.code,u.name', params).fetchall()
-    if actor['role'] == 'admin':
+    if actor['role'] == 'admin' or (actor['role'] == 'student' and not rules['student_own_grades_only']) or (actor['role'] == 'professor' and not rules['professor_assigned_courses_only']):
         courses = connection.execute('SELECT id,code,title FROM courses ORDER BY code').fetchall()
     elif actor['role'] == 'professor':
         courses = connection.execute('SELECT c.id,c.code,c.title FROM courses c JOIN teaching_assignments a ON a.course_id=c.id WHERE a.user_id=%s ORDER BY c.code', (actor['id'],)).fetchall()
     else:
         courses = connection.execute('SELECT c.id,c.code,c.title FROM courses c JOIN enrollments e ON e.course_id=c.id WHERE e.student_id=%s ORDER BY c.code', (actor['id'],)).fetchall()
-    return jsonify(actor=actor_json(actor), rows=rows, courses=courses,
-                   capabilities={'manageGrades':actor['role'] in ('professor','admin'),'administer':actor['role']=='admin','readAudit':actor['role'] in ('professor','admin')})
+    return jsonify(actor=actor_json(actor), rows=rows, courses=courses, policy=controls,
+                   capabilities={'manageGrades':actor['role'] in ('professor','admin') or not rules['block_student_grade_edit'],'administer':actor['role']=='admin','readAudit':actor['role'] in ('professor','admin') or not rules['audit_professor_only']})
 
 
 @portal.post('/api/portal/grades')
-@endpoint(('professor','admin'))
+@endpoint()
 def save_grade(connection, actor):
+    rules = policy(connection)['rules']
+    if actor['role'] == 'student' and rules['block_student_grade_edit']:
+        audit(connection, actor, 'grade_update_denied', False)
+        return jsonify(error='Your role does not allow this action.'), 403
     data = read_payload(('studentId','courseId','grade'))
     student, course, grade = valid_uuid(data['studentId']), valid_uuid(data['courseId']), data['grade']
     if type(grade) is not int or not 5<=grade<=10:
         raise ValueError('The grade must be a whole number from 5 to 10.')
-    if actor['role'] != 'admin' and not connection.execute('SELECT 1 FROM teaching_assignments WHERE user_id=%s AND course_id=%s', (actor['id'],course)).fetchone():
+    if actor['role'] == 'student' and rules['student_own_grades_only'] and student != str(actor['id']):
+        audit(connection, actor, 'grade_update_denied', False, student)
+        return jsonify(error='You may only edit your own grades.'), 403
+    if actor['role'] == 'professor' and rules['professor_assigned_courses_only'] and not connection.execute('SELECT 1 FROM teaching_assignments WHERE user_id=%s AND course_id=%s', (actor['id'],course)).fetchone():
         audit(connection, actor, 'grade_update_denied', False, course)
         return jsonify(error='You are not assigned to that course.'), 403
     if not connection.execute("SELECT 1 FROM enrollments e JOIN users u ON u.id=e.student_id WHERE e.student_id=%s AND e.course_id=%s AND u.role='student'",(student,course)).fetchone():
@@ -382,8 +433,11 @@ def enroll_student(connection, actor):
 
 
 @portal.get('/api/portal/audit')
-@endpoint(('professor','admin'))
+@endpoint()
 def read_audit(connection, actor):
+    if actor['role'] == 'student' and policy(connection)['rules']['audit_professor_only']:
+        audit(connection, actor, 'access_denied', False, request.path)
+        return jsonify(error='Your role does not allow this action.'), 403
     if actor['role']=='admin':
         rows=connection.execute('SELECT id,timestamp,actor_name AS "actorName",action,allowed,target FROM audit_events ORDER BY id DESC LIMIT 100').fetchall()
     else:

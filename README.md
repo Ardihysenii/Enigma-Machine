@@ -1,60 +1,30 @@
 # ENIGMA — local cryptography laboratory
 
-## Database-backed college portal
+## Unified college portal and Task 01
 
-`/college` now provides account signup/signin, student/professor/admin roles, assigned-course grade management, enrollment, and audit views. `/college/demo` retains the isolated fictional Task 01 switches. The refreshed lab preserves all cipher tables and walkthroughs and Task 02–06 operations.
+`/college` is the only college dashboard. It provides real signup/signin with fictional student, professor and administrator accounts. Old `/college/demo` and professor pages redirect to `/college`; the identity-switching APIs return HTTP 410 and cannot change records.
 
-Set `ENIGMA_DATABASE_URL` server-side to the Neon PostgreSQL connection string. Never put its value in GitHub. Install requirements and run `python scripts/setup_portal.py --admin-email admin@example.test --credentials-file C:\private\enigma-admin.txt`. The private output path must be new and outside the repository. Setup is additive, seeds two courses, and does not reset an existing administrator.
+Task 01 now controls this same signed-in portal. Its six switches are shared across all accounts and stored in PostgreSQL. All six default to ON. Turning a switch off intentionally permits the corresponding insecure behavior on saved fictional grades. Anyone operating the lab panel can change this demonstration policy; this is deliberately not a production access model. Never use real student data.
 
-Public signup creates students. An administrator assigns roles, professor courses and student enrollments. New students have no invented grades. Portal sessions are database-backed opaque tokens: only hashes are stored, signout revokes them, and they expire after 30 idle minutes or 12 hours total. Role changes revoke the target account sessions. Professor audit shows their own events; admin audit shows the latest 100 events.
+The six controls restrict student reads to their own records, block student professor-area access, block student grade edits, restrict professors to assigned courses, enforce a 30-second inactivity timeout, and restrict audit access to professors/admins. The own-record rule independently limits student edits even when grade editing is enabled. Background policy/dashboard polling does not refresh activity. Absolute session expiry remains 12 hours regardless of switches. Sign-in, CSRF, role changes and administrator management cannot be disabled by Task 01.
 
-Portal data persists in the separate `enigma_portal` PostgreSQL schema. Task 01 teaching switches do not alter portal permissions. Task 06 PIN/challenge simulation is unchanged and separate from normal portal login tokens. Disposable crypto-lab state retains the temporary-storage limitations documented below. Email verification and password recovery are not implemented; use fictional assessment accounts.
+Accounts, enrollments, grades, policy and audit persist in the `enigma_portal` schema. New students have no invented courses or grades: an administrator creates courses, enrolls students and assigns professors. The portal includes Overview, Grades, Courses, Professor area, Access history and administrator views. Grade changes accept integers 5–10. Grade changes with controls off are real persisted changes to fictional data, not a visual simulation.
 
-Tests: `python -m unittest discover -s tests -v`; set `ENIGMA_TEST_DATABASE_URL` to run PostgreSQL integration tests in an isolated temporary schema.
+### Setup and updates
 
+Set `ENIGMA_DATABASE_URL` server-side to the Neon PostgreSQL connection string. Never commit its value. Install requirements and run `python scripts/setup_portal.py` to apply additive migrations, including the shared policy table, without resetting accounts or grades. For first-administrator setup, add `--admin-email admin@example.test --credentials-file C:\private\enigma-admin.txt` using a new private path outside the repository. Existing administrators are not reset.
 
-The six task areas are implemented and connected to the existing dashboard, with Task 01 using a live college security-control panel. The sidebar, page structure, cards, colors and responsive layout are retained. Task-specific inputs have been added inside the existing workspace form.
+Run `python -m unittest discover -s tests -v`; set `ENIGMA_TEST_DATABASE_URL` for integration checks in a unique disposable schema. Test schemas are removed after testing; tests must never use the real portal schema.
 
-## Start on Windows
+On Windows, use **Start ENIGMA.cmd**, or create a virtual environment, install `requirements.txt` and run `python app.py`. Local service is loopback-only with debug disabled. Stop and restart an older server after code changes. **Start ENIGMA College.cmd** offers the same app on port 5002.
 
-1. Close any older ENIGMA server console with Ctrl+C. Python does not reload these changes automatically.
-2. Double-click **Start ENIGMA.cmd** and keep its window open.
-3. Open http://127.0.0.1:5000 and refresh the page.
-
-Or run from this directory:
-
-```powershell
-.\.venv\Scripts\python.exe app.py
-```
-
-For a new installation:
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe app.py
-```
-
-The application is deliberately loopback-only, debug off. Flask's development server is not a production service. If the browser says **Older server**, stop the previous console and relaunch. A successful syntax check or test run does not itself start the updated server.
+Task 06 remains a separate disposable software smart-card simulation. Email verification and password recovery are not implemented. Crypto-lab files and keys keep the temporary/local-storage limitations described below. All six controls being active is a demonstration state, not a security certification.
 
 ## Operations
 
-### 1. Security requirements — six direct college controls
+### 1. Security requirements
 
-Task 01 now contains only the live security panel. The old written-analysis form and its result/requirements cards are hidden for Task 01; Tasks 02–06 retain their workspaces. Previously saved analysis JSON is not deleted, and the legacy analysis API remains compatible.
-
-Open **Start ENIGMA College.cmd** for the connected app at http://127.0.0.1:5002/#analysis and its separate college page at http://127.0.0.1:5002/college. Both pages must use the same origin and browser session. Choose switches and click **Apply security rules**; Select all/Deselect all only prepares the switches. Cross-tab signals trigger fresh server reads, with two-second polling as fallback.
-
-The six independently switchable Python controls are:
-
-1. **Own grades:** students read only their own records; explicit other-student/all requests return 403. Also prevents editing another student's records.
-2. **Professor area:** students cannot access the professor page or its data endpoint.
-3. **Grade integrity:** students cannot change any grade. With this rule off, a selected student can change fictional grades unless the own-grades rule blocks that target.
-4. **Assigned courses:** professors can read/edit only their assigned course. Profesori Demo has Siguria e informacionit; Profesorja e Programimit has Programim. Applies to both grade-read endpoints and writes.
-5. **Inactivity expiry:** selected identity expires after 30 seconds without explicit college resource operations. Status/policy polling does not renew it. Expired read/write/audit operations return 401; press Hyr / kyçu përsëri to reselect the identity. The deadline is enforced on the server; the display shows a countdown. This short duration is a lab demonstration, not a production recommendation.
-6. **Audit access:** only a selected professor can read the college audit endpoint. With it off, a selected student can also read audit. Attempts are recorded locally, including denied edits/access and expiry. Latest 100 events per session are retained; audit files are not tamper-proof.
-
-The college has Grades, Professor area, Change grade, and Audit tabs. Identity selection logs in immediately and is deliberately operator-controlled, not real password authentication. Grade changes are real changes to isolated in-memory fictional records; they reset on server restart/runtime expiry. Grades accept integers 5–10 only. Policy and audit persist locally; known legacy two-rule policies migrate while retaining their settings and leaving the four new rules off. All six switches on means 6/6 active—not a security certification. Use fictional data only.
+Open `/#analysis`, prepare switches, then click **Apply security rules**. Select all/Deselect all only prepares a selection. Open `/college`, sign in and test the same grade operation before and after changing its control. Policy updates synchronize across tabs with polling as a fallback. A control is proven by an actual request and recorded before/after result, not its checkbox state. Reset all six switches to ON when finished.
 
 ### 2. Classical cipher
 Choose Caesar or Vigenere, Encrypt or Decrypt, enter a key and message. Caesar takes an integer (negative and wrapped shifts supported); Vigenere takes A-Z letters. ASCII letters become uppercase. Other characters, including spaces, punctuation and non-ASCII letters, stay unchanged and do not advance the key.

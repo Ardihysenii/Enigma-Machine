@@ -65,3 +65,16 @@ CREATE TABLE IF NOT EXISTS enigma_portal.login_limits (
   locked_until timestamptz
 );
 INSERT INTO enigma_portal.schema_versions(version) VALUES(1) ON CONFLICT DO NOTHING;
+
+-- Task 01 is a fictional educational lab: globally persisted, default-on controls.
+-- This is additive; apply explicitly alongside deployment, never from a request.
+CREATE TABLE IF NOT EXISTS enigma_portal.lab_policy (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  rules jsonb NOT NULL CHECK (jsonb_typeof(rules) = 'object'),
+  revision bigint NOT NULL DEFAULT 1 CHECK (revision >= 1),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO enigma_portal.lab_policy(singleton,rules) VALUES(true,
+  '{"student_own_grades_only":true,"block_student_professor_area":true,"block_student_grade_edit":true,"professor_assigned_courses_only":true,"session_inactivity_timeout":true,"audit_professor_only":true}'::jsonb)
+ON CONFLICT DO NOTHING;
+INSERT INTO enigma_portal.schema_versions(version) VALUES(2) ON CONFLICT DO NOTHING;
