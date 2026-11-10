@@ -10,6 +10,18 @@ import psycopg
 from psycopg import sql
 from werkzeug.security import generate_password_hash
 import app as application
+from portal_policy import RULE_IDS, validate_rules
+from psycopg.types.json import Jsonb
+
+
+class PortalPolicyValidation(unittest.TestCase):
+    def test_exact_boolean_shape(self):
+        good = dict.fromkeys(RULE_IDS, True)
+        self.assertEqual(validate_rules(good), good)
+        for value in (None, [], {}, dict(good, extra=True), dict(good, student_own_grades_only=1),
+                      dict(good, audit_professor_only='false')):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_rules(value)
 
 
 class PortalWithoutDatabase(unittest.TestCase):
@@ -55,6 +67,31 @@ class PortalDatabaseTests(unittest.TestCase):
     def setUp(self):
         application.app.config.update(TESTING=True,CLOUD_DEMO=False,PORTAL_DATABASE_URL=self.dsn,PORTAL_SCHEMA=self.schema)
         self.client=application.app.test_client()
+        # Each test starts default-on; never mutate a deployed schema.
+        with self.db() as connection:
+            connection.execute('UPDATE lab_policy SET rules=%s', (Jsonb(dict.fromkeys(RULE_IDS, True)),))
+            connection.execute('DELETE FROM login_limits')
+
+    def controls(self, **overrides):
+        rules = self.client.get('/api/portal/policy').json['rules']
+        rules.update(overrides)
+        response = self.post(self.client, 'policy', {'rules': rules})
+        self.assertEqual(response.status_code, 200, response.json)
+        return response.json
+
+    def records(self):
+        student, s = self.signup('policy-student')
+        other, o = self.signup('policy-other')
+        professor, p = self.signup('policy-professor')
+        courses = [str(uuid.uuid4()), str(uuid.uuid4())]
+        with self.db() as connection:
+            connection.execute("UPDATE users SET role='professor' WHERE id=%s", (p['id'],))
+            for identifier in courses:
+                connection.execute('INSERT INTO courses(id,code,title) VALUES(%s,%s,%s)', (identifier, 'P'+identifier[:12], 'Policy course'))
+                for user in (s, o):
+                    connection.execute('INSERT INTO enrollments(student_id,course_id) VALUES(%s,%s)', (user['id'], identifier))
+            connection.execute('INSERT INTO teaching_assignments(user_id,course_id) VALUES(%s,%s)', (p['id'], courses[0]))
+        return student, s, other, o, professor, p, courses
 
     def post(self,client,path,data):
         csrf=client.get('/api/portal/session').json['csrfToken']
@@ -142,19 +179,195 @@ class PortalDatabaseTests(unittest.TestCase):
         second.set_cookie('enigma_portal_session',token)
         self.assertEqual(second.get('/api/portal/session').json['actor']['id'],actor['id'])
         with self.db() as connection:
-            connection.execute("UPDATE sessions SET last_seen=now()-interval '31 minutes' WHERE user_id=%s",(actor['id'],))
+            connection.execute("UPDATE sessions SET last_seen=now()-interval '31 seconds' WHERE user_id=%s",(actor['id'],))
         self.assertEqual(client.get('/api/portal/dashboard').status_code,401)
         self.assertEqual(self.post(client,'signin',{'email':actor['email'],'password':'A-long-test-password-123'}).status_code,200)
         with self.db() as connection:
             connection.execute("UPDATE sessions SET expires_at=now()-interval '1 minute' WHERE user_id=%s",(actor['id'],))
         self.assertIsNone(client.get('/api/portal/session').json['actor'])
 
-    def test_fictional_policy_cannot_grant_portal_privileges(self):
+    def test_lab_policy_does_not_change_account_roles(self):
         student,actor=self.signup('isolation')
         rules=dict.fromkeys(('student_own_grades_only','block_student_professor_area','block_student_grade_edit','professor_assigned_courses_only','session_inactivity_timeout','audit_professor_only'),False)
-        self.assertEqual(student.post('/api/college/policy',json={'rules':rules}).status_code,200)
+        self.assertEqual(self.post(student,'policy',{'rules':rules}).status_code,200)
         self.assertEqual(student.get('/api/portal/administration').status_code,403)
         self.assertEqual(student.get('/api/portal/session').json['actor']['role'],'student')
+
+
+    def test_policy_is_global_persisted_csrf_protected_and_audited(self):
+        initial = self.client.get('/api/portal/policy')
+        self.assertEqual(initial.status_code, 200)
+        self.assertEqual(initial.json['rules'], dict.fromkeys(RULE_IDS, True))
+        self.assertTrue(initial.json['demo'])
+        self.assertEqual(initial.json['active_count'], 6)
+        self.assertEqual(initial.json['total_controls'], 6)
+        self.assertEqual(self.client.post('/api/portal/policy', json={'rules': initial.json['rules']}).status_code, 403)
+        result = self.controls(student_own_grades_only=False)
+        self.assertEqual(result['revision'], initial.json['revision']+1)
+        self.assertEqual(result['active_count'], 5)
+        second = application.app.test_client()
+        self.assertEqual(second.get('/api/portal/policy').json, result)
+        with self.db() as connection:
+            row = connection.execute("SELECT actor_id,actor_name FROM audit_events WHERE action='lab_policy_changed' ORDER BY id DESC LIMIT 1").fetchone()
+            self.assertIsNone(row[0])
+            self.assertIn('Lab operator', row[1])
+        for payload in ({}, {'rules': {}}, {'rules': []}, {'rules': dict(result['rules'], audit_professor_only=0)},
+                        {'rules': result['rules'], 'extra': True}, []):
+            with self.subTest(payload=payload):
+                self.assertEqual(self.post(self.client, 'policy', payload).status_code, 400)
+        csrf = self.client.get('/api/portal/session').json['csrfToken']
+        self.assertEqual(self.client.post('/api/portal/policy', data='{bad', content_type='application/json', headers={'X-CSRF-Token':csrf}).status_code, 400)
+        self.assertEqual(second.get('/api/portal/policy').json, result)
+
+    def test_student_view_edit_and_professor_area_switches_are_independent(self):
+        student, s, other, o, professor, p, courses = self.records()
+        own = {'studentId':s['id'], 'courseId':courses[0], 'grade':8}
+        foreign = dict(own, studentId=o['id'])
+        self.assertEqual(student.get('/api/portal/professor').status_code, 403)
+        self.assertEqual(self.post(student, 'grades', own).status_code, 403)
+        self.controls(block_student_professor_area=False)
+        response = student.get('/api/portal/professor')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(all(r['studentId']==s['id'] for r in response.json['rows']))
+        self.assertFalse(response.json['capabilities']['manageGrades'])
+        self.controls(block_student_grade_edit=False)
+        self.assertTrue(student.get('/api/portal/dashboard').json['capabilities']['manageGrades'])
+        self.assertEqual(self.post(student, 'grades', own).status_code, 200)
+        self.assertEqual(self.post(student, 'grades', foreign).status_code, 403)
+        self.controls(student_own_grades_only=False)
+        for route in ('dashboard', 'professor'):
+            rows = student.get('/api/portal/'+route).json['rows']
+            self.assertIn(o['id'], [r['studentId'] for r in rows])
+        self.assertEqual(self.post(student, 'grades', foreign).status_code, 200)
+        # Real database grades changed, not synthetic dashboard state.
+        with self.db() as connection:
+            self.assertEqual(connection.execute('SELECT grade,updated_by FROM grades WHERE student_id=%s AND course_id=%s', (o['id'], courses[0])).fetchone(), (8, uuid.UUID(s['id'])))
+        self.controls(block_student_grade_edit=True)
+        self.assertEqual(self.post(student, 'grades', foreign).status_code, 403)
+        self.controls(student_own_grades_only=True, block_student_professor_area=True)
+        self.assertEqual(student.get('/api/portal/professor').status_code, 403)
+        self.assertTrue(all(r['studentId']==s['id'] for r in student.get('/api/portal/dashboard').json['rows']))
+
+    def test_professor_course_scope_and_audit_toggle(self):
+        student, s, other, o, professor, p, courses = self.records()
+        foreign = {'studentId':s['id'], 'courseId':courses[1], 'grade':9}
+        self.assertEqual(self.post(professor, 'grades', foreign).status_code, 403)
+        self.assertTrue(all(r['courseId']==courses[0] for r in professor.get('/api/portal/dashboard').json['rows']))
+        self.assertEqual(student.get('/api/portal/audit').status_code, 403)
+        self.controls(professor_assigned_courses_only=False, audit_professor_only=False)
+        self.assertEqual(self.post(professor, 'grades', foreign).status_code, 200)
+        for route in ('dashboard', 'professor'):
+            result = professor.get('/api/portal/'+route).json
+            self.assertIn(courses[1], [r['courseId'] for r in result['rows']])
+            self.assertIn(courses[1], [r['id'] for r in result['courses']])
+        self.assertTrue(student.get('/api/portal/dashboard').json['capabilities']['readAudit'])
+        self.assertEqual(student.get('/api/portal/audit').status_code, 200)
+        self.controls(professor_assigned_courses_only=True, audit_professor_only=True)
+        self.assertEqual(self.post(professor, 'grades', foreign).status_code, 403)
+        self.assertEqual(student.get('/api/portal/audit').status_code, 403)
+
+    def test_disabled_controls_never_bypass_auth_csrf_admin_or_revocation(self):
+        student, actor = self.signup('protected')
+        self.controls(**dict.fromkeys(RULE_IDS, False))
+        anonymous = application.app.test_client()
+        for route in ('dashboard', 'professor', 'audit', 'administration'):
+            self.assertEqual(anonymous.get('/api/portal/'+route).status_code, 401)
+        self.assertEqual(self.post(anonymous, 'grades', {}).status_code, 401)
+        self.assertEqual(student.get('/api/portal/administration').status_code, 403)
+        for route in ('roles','courses','assignments','enrollments'):
+            self.assertEqual(self.post(student, route, {}).status_code, 403)
+        self.assertEqual(student.post('/api/portal/grades', json={}).status_code, 403)
+        self.assertEqual(student.get('/api/portal/session').json['actor']['role'], 'student')
+        token = student.get_cookie('enigma_portal_session').value
+        self.assertEqual(self.post(student, 'signout', {}).status_code, 200)
+        student.set_cookie('enigma_portal_session', token)
+        self.assertEqual(student.get('/api/portal/dashboard').status_code, 401)
+        self.assertEqual(self.post(student, 'signin', {'email':actor['email'], 'password':'A-long-test-password-123'}).status_code, 200)
+        admin = self.admin()
+        self.assertEqual(self.post(admin, 'roles', {'userId':actor['id'], 'role':'professor'}).status_code, 200)
+        self.assertEqual(student.get('/api/portal/dashboard').status_code, 401)
+
+    def test_polling_and_policy_reads_do_not_touch_activity(self):
+        client, actor = self.signup('polling')
+        self.controls(block_student_professor_area=False)
+        with self.db() as connection:
+            connection.execute("UPDATE sessions SET last_seen=now()-interval '10 seconds' WHERE user_id=%s", (actor['id'],))
+            before = connection.execute('SELECT last_seen FROM sessions WHERE user_id=%s', (actor['id'],)).fetchone()[0]
+        for route in ('session','policy','dashboard?poll=1','professor?poll=1'):
+            self.assertEqual(client.get('/api/portal/'+route).status_code, 200)
+        with self.db() as connection:
+            self.assertEqual(connection.execute('SELECT last_seen FROM sessions WHERE user_id=%s', (actor['id'],)).fetchone()[0], before)
+        self.assertEqual(client.get('/api/portal/dashboard').status_code, 200)
+        with self.db() as connection:
+            self.assertGreater(connection.execute('SELECT last_seen FROM sessions WHERE user_id=%s', (actor['id'],)).fetchone()[0], before)
+            connection.execute("UPDATE sessions SET last_seen=now()-interval '31 seconds' WHERE user_id=%s", (actor['id'],))
+        self.assertEqual(client.get('/api/portal/dashboard?poll=1').status_code, 401)
+        self.assertIsNone(client.get('/api/portal/session').json['actor'])
+
+    def test_idle_off_keeps_old_sessions_during_login_cleanup_but_not_absolute_expiry(self):
+        client, actor = self.signup('idle-off')
+        self.controls(session_inactivity_timeout=False)
+        with self.db() as connection:
+            connection.execute("UPDATE sessions SET last_seen=now()-interval '2 hours' WHERE user_id=%s", (actor['id'],))
+        # Another login must not delete an idle session while the idle rule is off.
+        self.admin()
+        self.assertEqual(client.get('/api/portal/session').json['actor']['id'], actor['id'])
+        self.assertEqual(client.get('/api/portal/dashboard?poll=1').status_code, 200)
+        with self.db() as connection:
+            connection.execute("UPDATE sessions SET expires_at=now()-interval '1 second' WHERE user_id=%s", (actor['id'],))
+        self.assertEqual(client.get('/api/portal/dashboard').status_code, 401)
+        self.assertIsNone(client.get('/api/portal/session').json['actor'])
+        self.admin()
+        with self.db() as connection:
+            self.assertEqual(connection.execute('SELECT count(*) FROM sessions WHERE user_id=%s', (actor['id'],)).fetchone()[0], 0)
+
+
+    def test_observed_idle_expiry_permanently_revokes_cookie_before_rule_off(self):
+        client, actor = self.signup('idle-revoked')
+        token = client.get_cookie('enigma_portal_session').value
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        with self.db() as connection:
+            connection.execute("UPDATE sessions SET last_seen=now()-interval '31 seconds' WHERE token_hash=%s", (digest,))
+        self.assertIsNone(client.get('/api/portal/session').json['actor'])
+        with self.db() as connection:
+            self.assertIsNone(connection.execute('SELECT 1 FROM sessions WHERE token_hash=%s', (digest,)).fetchone())
+        self.controls(session_inactivity_timeout=False)
+        # Explicitly replay the exact same cookie after weakening the idle rule.
+        replay = application.app.test_client()
+        replay.set_cookie('enigma_portal_session', token)
+        for current in (client, replay):
+            self.assertEqual(current.get('/api/portal/dashboard').status_code, 401)
+            self.assertIsNone(current.get('/api/portal/session').json['actor'])
+
+    def test_observed_absolute_expiry_permanently_revokes_cookie(self):
+        client, actor = self.signup('absolute-revoked')
+        token = client.get_cookie('enigma_portal_session').value
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        with self.db() as connection:
+            connection.execute("UPDATE sessions SET expires_at=now()-interval '1 second' WHERE token_hash=%s", (digest,))
+        self.assertEqual(client.get('/api/portal/dashboard?poll=1').status_code, 401)
+        with self.db() as connection:
+            self.assertIsNone(connection.execute('SELECT 1 FROM sessions WHERE token_hash=%s', (digest,)).fetchone())
+        self.controls(session_inactivity_timeout=False)
+        replay = application.app.test_client()
+        replay.set_cookie('enigma_portal_session', token)
+        self.assertEqual(replay.get('/api/portal/dashboard').status_code, 401)
+
+    def test_fresh_session_detects_missing_policy_migration(self):
+        # Only rename the table in this class's UUID-named disposable schema.
+        # Always restore it, including on assertion failure.
+        with self.db() as connection:
+            connection.execute('ALTER TABLE lab_policy RENAME TO lab_policy_missing')
+        try:
+            fresh = application.app.test_client()
+            self.assertIsNone(fresh.get_cookie('enigma_portal_session'))
+            response = fresh.get('/api/portal/session')
+            self.assertEqual(response.status_code, 503)
+            self.assertFalse(response.json['configured'])
+        finally:
+            with self.db() as connection:
+                connection.execute('ALTER TABLE lab_policy_missing RENAME TO lab_policy')
+        self.assertEqual(application.app.test_client().get('/api/portal/session').status_code, 200)
 
 
 if __name__=='__main__':
