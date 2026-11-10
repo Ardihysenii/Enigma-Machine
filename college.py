@@ -130,13 +130,14 @@ def visible_rows(demo, actor):
     return [dict(row) for row in rows]
 
 
-@college.get('/college')
-@college.get('/college/')
+@college.get('/college/demo')
+@college.get('/college/demo/')
 def home():
     return render_template('college.html', initial_view='grades')
 
 
 @college.get('/college/professor')
+@college.get('/college/demo/professor')
 @protect_errors
 def professor_page():
     lab, demo = context()
