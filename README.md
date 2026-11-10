@@ -1,5 +1,18 @@
 # ENIGMA — local cryptography laboratory
 
+## Database-backed college portal
+
+`/college` now provides account signup/signin, student/professor/admin roles, assigned-course grade management, enrollment, and audit views. `/college/demo` retains the isolated fictional Task 01 switches. The refreshed lab preserves all cipher tables and walkthroughs and Task 02–06 operations.
+
+Set `ENIGMA_DATABASE_URL` server-side to the Neon PostgreSQL connection string. Never put its value in GitHub. Install requirements and run `python scripts/setup_portal.py --admin-email admin@example.test --credentials-file C:\private\enigma-admin.txt`. The private output path must be new and outside the repository. Setup is additive, seeds two courses, and does not reset an existing administrator.
+
+Public signup creates students. An administrator assigns roles, professor courses and student enrollments. New students have no invented grades. Portal sessions are database-backed opaque tokens: only hashes are stored, signout revokes them, and they expire after 30 idle minutes or 12 hours total. Role changes revoke the target account sessions. Professor audit shows their own events; admin audit shows the latest 100 events.
+
+Portal data persists in the separate `enigma_portal` PostgreSQL schema. Task 01 teaching switches do not alter portal permissions. Task 06 PIN/challenge simulation is unchanged and separate from normal portal login tokens. Disposable crypto-lab state retains the temporary-storage limitations documented below. Email verification and password recovery are not implemented; use fictional assessment accounts.
+
+Tests: `python -m unittest discover -s tests -v`; set `ENIGMA_TEST_DATABASE_URL` to run PostgreSQL integration tests in an isolated temporary schema.
+
+
 The six task areas are implemented and connected to the existing dashboard, with Task 01 using a live college security-control panel. The sidebar, page structure, cards, colors and responsive layout are retained. Task-specific inputs have been added inside the existing workspace form.
 
 ## Start on Windows
