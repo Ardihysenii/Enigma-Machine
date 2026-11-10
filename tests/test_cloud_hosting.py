@@ -45,11 +45,9 @@ assert c.post('/api/tasks/classical/run', json={'key':'3'}, base_url=base,
               headers={'Origin':'https://evil.example'}, environ_overrides=remote).status_code==403
 r=c.post('/api/college/login', json={'user_id':'s001'}, base_url=base,
          headers={'Origin':base}, environ_overrides=remote)
-assert r.status_code==200, r.data
-assert c.get_cookie('session', domain='enigma-test.vercel.app').secure
-r=c.get('/api/college/grades',base_url=base,environ_overrides=remote)
-assert r.status_code==200, r.data
-assert len(r.get_json()['rows'])==5
+assert r.status_code==410, r.data
+assert c.get('/college/demo',base_url=base,environ_overrides=remote).status_code==302
+assert c.get('/api/college/grades',base_url=base,environ_overrides=remote).status_code==410
 print('Cloud startup, pages, exact hosts, origin protection, secure cookies, crypto and college checks passed.')
 '''
         with tempfile.TemporaryDirectory() as folder:
