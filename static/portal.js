@@ -22,7 +22,7 @@
     ['role-form', 'assignment-form', 'enrollment-form', 'course-form', 'teacher-course-form', 'teacher-enrollment-form', 'teacher-assignment-form'].forEach((id) => $(id).reset());
     $('record-search').value = '';
     text($('overview-title'), 'Your academic workspace.');
-    text($('scope-description'), 'Server-enforced permissions determine the records and actions available to you.');
+    text($('scope-description'), 'Choose a course to see its grades. Demo controls are available in Demo settings.');
   }
   class ApiError extends Error { constructor(message, status) { super(message); this.status = status; } }
   async function api(path, body) {
@@ -116,18 +116,18 @@
     text($('actor-name'), actor.name); text($('actor-email'), actor.email); text($('actor-role'), roles[actor.role] || actor.role);
   }
   async function enterDashboard() {
-    state.view = state.actor.role === 'professor' ? 'records' : 'overview'; state.dirty = false; applyActor(state.actor); showTop('dashboard');
+    state.view = state.actor.role === 'professor' ? 'students' : 'overview'; state.dirty = false; applyActor(state.actor); showTop('dashboard');
     document.querySelectorAll('[data-view]').forEach((button) => { button.hidden = button.dataset.view === 'administration'; });
     switchView(state.view, false); await refreshPolicy(false); await loadDashboard();
   }
   function permitted(view) {
     const caps = state.dashboard && state.dashboard.capabilities;
-    return ['overview', 'records', 'courses', 'professor', 'audit'].includes(view) || Boolean(caps && view === 'administration' && caps.administer);
+    return (view === 'students' && state.actor?.role === 'professor') || ['overview', 'records', 'courses', 'professor', 'audit'].includes(view) || Boolean(caps && view === 'administration' && caps.administer);
   }
   function switchView(view, load = true) {
     if (!permitted(view)) return;
     state.view = view;
-    ['overview', 'records', 'courses', 'professor', 'administration', 'audit'].forEach((name) => { $(`${name}-view`).hidden = name !== view; });
+    ['students', 'overview', 'records', 'courses', 'professor', 'administration', 'audit'].forEach((name) => { $(`${name}-view`).hidden = name !== view; });
     document.querySelectorAll('[data-view]').forEach((button) => { if (button.dataset.view === view) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current'); });
     if (load && view === 'administration') loadAdministration();
     if (load && view === 'audit') loadAudit();
@@ -138,10 +138,10 @@
     if (!state.actor || (background && isEditing() && !force)) return;
     if (!background) state.dirty = false;
     const current = startLoad('dashboard');
-    if (!background) text($('records-state'), 'Loading academic records…');
+    if (!background) text($('records-state'), 'Loading grades…');
     try {
       const data = await api(background ? '/dashboard?poll=1' : '/dashboard'); if (!current()) return;
-      if (!data.actor || !Array.isArray(data.rows) || !Array.isArray(data.courses) || !data.capabilities) throw new Error('The server returned incomplete academic records.');
+      if (!data.actor || !Array.isArray(data.rows) || !Array.isArray(data.courses) || !data.capabilities) throw new Error('We couldn’t load your grades. Try refreshing.');
       if (background && isEditing() && !force) { state.policyPending = true; return; }
       applyDashboard(data);
 
@@ -155,7 +155,7 @@
     const canEdit = Boolean(data.capabilities.manageGrades);
     $('grade-action-heading').hidden = !canEdit; $('grade-hint').hidden = !canEdit;
     $('records-body').replaceChildren();
-    message($('records-state'), rows.length ? `${rows.length} record${rows.length === 1 ? '' : 's'} · ${canEdit ? 'Grade changes are saved to fictional records.' : 'Read-only access.'}` : search ? 'No records match your search.' : filter ? 'No student records for this course yet.' : state.actor.role === 'student' ? 'No enrolled courses yet. Ask your teacher to enroll you using your account email.' : 'No student records yet. Open Manage courses & class roster above to connect a course and add students.');
+    message($('records-state'), rows.length ? `${rows.length} record${rows.length === 1 ? '' : 's'} · ${canEdit ? 'Changes save to the student’s account.' : 'Updated by your teacher.'}` : search ? 'No records match your search.' : filter ? 'No students are enrolled in this course yet.' : state.actor.role === 'student' ? 'No enrolled courses yet. Ask your teacher to enroll you using your account email.' : 'No grades yet. Add a course, then enroll students from the Students page.');
     rows.forEach((row) => {
       const tr = node('tr'); const student = node('td'); student.append(node('span', row.studentName), node('small', row.studentEmail));
       const course = node('td'); course.append(node('span', row.courseCode), node('small', row.courseTitle));
@@ -198,7 +198,7 @@
       message($('admin-state'), data.users.length ? '' : 'No accounts returned by the server.'); $('admin-content').hidden = false;
     } catch (error) { if (current()) message($('admin-state'), error.message, true); }
   }
-  [['teacher-course-form', '/courses', 'Course created. Add a student, then enter their grade below.'], ['teacher-enrollment-form', '/teaching/enrollments', 'Student added. Their grade row is available below.'], ['teacher-assignment-form', '/teaching/assignments', 'Course connected. Existing enrolled students and grades are shown below.']].forEach(([id, path, success]) => {
+  [['teacher-course-form', '/courses', 'Course created. Open Students to add your class.'], ['teacher-enrollment-form', '/teaching/enrollments', 'Student added to the course. Open Grades to enter a result.'], ['teacher-assignment-form', '/teaching/assignments', 'Course added. View its students and grades from your dashboard.']].forEach(([id, path, success]) => {
     $(id).addEventListener('submit', async (event) => {
       event.preventDefault(); const form = event.currentTarget;
       if (form.dataset.busy || !form.reportValidity()) return;
@@ -242,6 +242,7 @@
   }
   $('role-user').addEventListener('change', () => { const user = state.administration && state.administration.users.find((u) => String(u.id) === $('role-user').value); if (user) $('role-value').value = user.role; });
   $('course-filter').addEventListener('change', renderRows);
+  $('refresh-students').addEventListener('click', () => loadDashboard());
   $('refresh-records').addEventListener('click', () => loadDashboard());
   $('refresh-overview').addEventListener('click', () => loadDashboard());
   $('record-search').addEventListener('input', renderRows);
@@ -284,20 +285,22 @@
     const caps = data.capabilities;
     const isTeacher = data.actor.role === 'professor';
     $('teacher-directory').hidden = !isTeacher;
+    document.querySelectorAll('[data-view="students"]').forEach(el => { el.hidden = !isTeacher; });
+    $('teacher-enrollment-panel').hidden = !isTeacher;
     $('teacher-tools').hidden = !isTeacher;
     $('teacher-management').hidden = !isTeacher;
-    if (isTeacher && !$('teacher-management').dataset.ready) { $('teacher-management').open = true; $('teacher-management').dataset.ready = 'true'; }
+    if (isTeacher && !$('teacher-management').dataset.ready) { $('teacher-management').open = false; $('teacher-management').dataset.ready = 'true'; }
     $('teacher-workspace-note').hidden = !isTeacher;
     text($('workspace-identity'), isTeacher ? 'TEACHER WORKSPACE' : data.actor.role === 'student' ? 'STUDENT WORKSPACE' : 'ADMINISTRATION');
-    document.querySelectorAll('.workspace-nav [data-view="professor"]').forEach(el => { el.hidden = data.actor.role !== 'student'; });
-    document.querySelectorAll('.workspace-nav [data-view="records"]').forEach(el => { el.lastChild.textContent = isTeacher ? 'Gradebook' : 'My grades'; });
+    document.querySelectorAll('[data-view="professor"]').forEach(el => { el.hidden = data.actor.role !== 'student'; });
+    document.querySelectorAll('.workspace-nav [data-view="records"]').forEach(el => { el.lastChild.textContent = isTeacher ? 'Grades' : 'My grades'; });
     const oldStudent = $('teacher-student-id').value;
-    fillSelect($('teacher-student-id'), (data.teachingStudents || []).filter(u => u.active !== false).map(u => [u.id, u.name + ' · ' + u.email]), 'Select a database student');
+    fillSelect($('teacher-student-id'), (data.teachingStudents || []).filter(u => u.active !== false).map(u => [u.id, u.name + ' · ' + u.email]), 'Choose a student');
     if ((data.teachingStudents || []).some(u => String(u.id) === oldStudent)) $('teacher-student-id').value = oldStudent;
     const oldUnassigned = $('teacher-unassigned-course').value;
     fillSelect($('teacher-unassigned-course'), (data.unassignedCourses || []).map(c => [c.id, c.code + ' · ' + c.title]), 'Select an unassigned course');
     if ((data.unassignedCourses || []).some(c => String(c.id) === oldUnassigned)) $('teacher-unassigned-course').value = oldUnassigned;
-    text($('teacher-workspace-note'), (data.teachingCourses || []).length ? 'This gradebook shows students enrolled in your assigned courses. Add a database student above to enter their first grade. Saved changes appear in that student’s account. The assigned-course security switch controls whether other courses can be viewed or edited.' : 'You have no assigned courses yet. Connect an unassigned existing course or create a new one above. We do not silently grant access to another teacher’s classes.');
+    text($('teacher-workspace-note'), 'Grades are saved to each student’s account.');
     const selectedTeachingCourse = $('teacher-enrollment-course').value;
     fillSelect($('teacher-enrollment-course'), (data.teachingCourses || []).map((c) => [c.id, c.code + ' · ' + c.title]), 'Choose your course');
     if ((data.teachingCourses || []).some((c) => String(c.id) === selectedTeachingCourse)) $('teacher-enrollment-course').value = selectedTeachingCourse;
@@ -308,18 +311,20 @@
     }
     if (!caps.readAudit) $('audit-body').replaceChildren();
     if (!permitted(state.view)) switchView('overview', false);
-    text($('records-title'), isTeacher ? 'Teacher gradebook.' : data.actor.role === 'student' ? 'My grades.' : 'Academic grades.');
-    text($('records-description'), isTeacher ? 'Select students, enter new grades, or update saved grades. Every change is checked and saved by the server.' : caps.manageGrades ? 'The laboratory grade-edit restriction is OFF. Permitted changes save to fictional records.' : 'Your enrolled courses and saved results. Read-only while the grade-edit protection is ON.');
-    text($('overview-title'), isTeacher ? 'Teacher dashboard.' : data.actor.role === 'student' ? 'Student dashboard.' : 'Administrator dashboard.');
-    text($('overview-description'), 'A focused view of the courses and recorded results available to your account.');
-    text($('courses-description'), data.actor.role === 'student' ? 'Your enrolled courses, as returned by the server.' : data.actor.role === 'professor' ? 'Courses available under your current teaching permissions.' : 'The course catalog available to your administrator account.');
+    text($('records-title'), isTeacher ? 'Grades' : data.actor.role === 'student' ? 'My grades' : 'Grades');
+    text($('records-description'), isTeacher ? 'Add a grade or update a result. Changes are saved to the student’s account.' : caps.manageGrades ? 'Demo editing is on. You can change the grades shown here.' : 'Your results, updated by your teachers.');
+    text($('overview-title'), isTeacher ? 'Overview' : data.actor.role === 'student' ? 'My dashboard' : 'Overview');
+    text($('overview-description'), 'Your courses and latest results.');
+    text(document.querySelector('.feature-card h2'), isTeacher ? 'Your class, at a glance.' : 'How you’re doing.');
+    text(document.querySelector('.feature-card > p'), isTeacher ? 'Review results and enter grades for your students.' : 'See your latest results for each course.');
+    text($('courses-description'), data.actor.role === 'student' ? 'The courses you’re enrolled in.' : data.actor.role === 'professor' ? 'Your courses and their students.' : 'Browse campus courses.');
     text($('scope-description'), data.actor.role === 'student' ? 'Student scope is controlled by Task 01. Turning protections off can expose additional fictional records or enable grade editing. The server decides every request.' : 'Your current role and the active security controls determine course visibility and editing permissions.');
     const previous = $('course-filter').value;
     fillSelect($('course-filter'), data.courses.map((c) => [c.id, c.code + ' · ' + c.title]), 'All courses', false);
     if (data.courses.some((c) => String(c.id) === previous)) $('course-filter').value = previous;
     const graded = data.rows.filter((row) => typeof row.grade === 'number');
     $('overview-summary').replaceChildren();
-    [['Available courses', data.courses.length], ['Recorded grades', graded.length], ['Awaiting a grade', data.rows.length - graded.length]].forEach(([label, count]) => {
+    [['Courses', data.courses.length], ['Graded', graded.length], ['Not graded yet', data.rows.length - graded.length]].forEach(([label, count]) => {
       const item = node('div', null, 'summary-item'); item.append(node('span', label), node('strong', count)); $('overview-summary').append(item);
     });
     renderCourses(); renderRows(); renderStudentDirectory(); renderAccess();
@@ -331,24 +336,24 @@
     const search = $('teacher-student-search').value.trim().toLocaleLowerCase();
     const all = data.teachingStudents || [];
     const students = all.filter(u => !search || (u.name + ' ' + u.email).toLocaleLowerCase().includes(search));
-    text($('teacher-directory-state'), all.length ? students.length + ' of ' + all.length + ' student accounts' : 'No student accounts exist yet. Create a Student account to start; no demo students are invented.');
+    text($('teacher-directory-state'), all.length ? students.length + ' of ' + all.length + ' student accounts' : 'No students yet. Student accounts will appear here after sign-up.');
     if (all.length && !students.length) text($('teacher-directory-state'), 'No students match your search.');
     students.forEach(user => {
       const rows = data.rows.filter(row => String(row.studentId) === String(user.id));
       const tr = node('tr'); const identity = node('td'); identity.append(node('span', user.name), node('small', user.email));
-      tr.append(identity, node('td', user.active === false ? 'Inactive' : 'Active'), node('td', rows.length ? rows.map(row => row.courseCode + ': ' + (row.grade == null ? 'Not yet graded' : row.grade)).join(', ') : 'No enrollment in visible courses'));
+      tr.append(identity, node('td', user.active === false ? 'Inactive' : 'Active'), node('td', rows.length ? rows.map(row => row.courseCode + ': ' + (row.grade == null ? 'Not yet graded' : row.grade)).join(', ') : 'Not in your courses yet'));
       const actions = node('td');
       const enroll = node('button', 'Enroll in course', 'button secondary'); enroll.type = 'button'; enroll.disabled = user.active === false;
       enroll.addEventListener('click', () => {
-        $('teacher-management').open = true; $('teacher-student-id').value = String(user.id);
+        $('teacher-enrollment-panel').open = true; $('teacher-student-id').value = String(user.id);
         $('teacher-enrollment-form').scrollIntoView({ block: 'center', behavior: 'smooth' });
         $('teacher-enrollment-course').focus();
-        if (!(data.teachingCourses || []).length) notice('Connect an unassigned course or create your course first, then enroll this student.');
+        if (!(data.teachingCourses || []).length) { switchView('courses'); $('teacher-management').open = true; notice('Add or create a course first. Then return to Students to enroll them.'); }
       });
       actions.append(enroll);
       if (rows.length) {
         const grades = node('button', 'View grades', 'button secondary'); grades.type = 'button';
-        grades.addEventListener('click', () => { $('record-search').value = user.email; $('course-filter').value = ''; renderRows(); $('records-table-title').scrollIntoView({ block: 'center' }); });
+        grades.addEventListener('click', () => { $('record-search').value = user.email; $('course-filter').value = ''; renderRows(); switchView('records', false); $('records-table-title').scrollIntoView({ block: 'center' }); });
         actions.append(grades);
       }
       tr.append(actions); body.append(tr);
@@ -368,13 +373,13 @@
       const graded = rows.filter((row) => row.grade != null).length;
       const card = node('article', null, 'course-card');
       const code = node('span', course.code, 'course-monogram');
-      card.append(code, node('h2', course.title), node('p', rows.length + ' accessible record' + (rows.length === 1 ? '' : 's') + ' · ' + graded + ' graded'));
+      card.append(code, node('h2', course.title), node('p', rows.length + (state.actor.role === 'student' ? ' enrollment' : ' students') + ' · ' + graded + ' graded'));
       const button = node('button', 'View course grades →', 'button secondary'); button.type = 'button';
       button.addEventListener('click', () => { $('course-filter').value = String(course.id); $('record-search').value = ''; renderRows(); switchView('records', false); });
       card.append(button); $('course-cards').append(card);
       if (index < 3) {
         const preview = node('div', null, 'preview-course'); const detail = node('div');
-        detail.append(node('h3', course.title), node('p', rows.length + ' accessible records · ' + graded + ' graded'));
+        detail.append(node('h3', course.title), node('p', graded + ' graded · ' + (rows.length - graded) + ' awaiting a grade'));
         preview.append(node('span', course.code, 'course-monogram'), detail); $('course-preview').append(preview);
       }
     });
@@ -385,13 +390,13 @@
     text($('professor-access'), locked ? 'Teacher access is restricted.' : 'Request your available teaching workspace.');
     text($('professor-description'), locked ? 'Your student role is blocked by the active professor-area rule. Test it below to see the server response, not a simulated result.' : student ? 'The professor-area restriction is off. Access is still subject to the current own-grade and grade-edit controls.' : 'Request the professor endpoint with your real account permissions.');
     text($('test-professor'), locked ? 'Test restricted access →' : 'Request teacher access →');
-    text($('audit-access'), state.dashboard?.capabilities.readAudit ? (state.actor.role === 'professor' ? 'Campus activity: student signups, sign-ins, enrollments and grade changes. The latest 100 server-recorded events are shown.' : 'Your current permissions allow access history. Only server-returned events are shown.') : 'Access history is restricted for your role. Refresh history to test the boundary and see the server’s response.');
+    text($('audit-access'), state.dashboard?.capabilities.readAudit ? (state.actor.role === 'professor' ? 'The latest 100 campus updates.' : 'Your current permissions allow access history. Only server-returned events are shown.') : 'Access history is restricted for your role. Refresh history to test the boundary and see the server’s response.');
   }
   function applyPolicy(data) {
     if (!data || !data.rules) return;
     const changed = state.policy && String(state.policy.revision) !== String(data.revision);
     state.policy = data;
-    text($('policy-count'), data.active_count + ' / ' + data.total_controls + ' security controls active');
+    text($('policy-count'), data.active_count + ' / ' + data.total_controls + ' demo controls on');
     $('policy-controls').replaceChildren();
     Object.entries(controlNames).forEach(([key, label]) => {
       const enabled = data.rules[key] === true;
@@ -408,7 +413,7 @@
       $('audit-body').replaceChildren();
     }
     if (state.actor) renderAccess();
-    text($('policy-state'), state.policyPending && isEditing() ? 'Policy changed. Finish your edit, then save or refresh records to load the updated permissions.' : 'Controls are managed in Task 01. All permission decisions are enforced by the server.');
+    text($('policy-state'), state.policyPending && isEditing() ? 'Policy changed. Finish your edit, then save or refresh records to load the updated permissions.' : 'Change these controls in the security demo.');
   }
   function isEditing() {
     return state.dirty || Boolean(document.activeElement?.closest('#dashboard-view form')) || Boolean(document.querySelector('#dashboard-view form[data-busy]'));
