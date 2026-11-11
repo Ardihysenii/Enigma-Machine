@@ -234,21 +234,27 @@ def limit_failure(connection, key, threshold=8):
 @portal.post('/api/portal/signup')
 def signup():
     try:
-        data = read_payload(('name','email','password'))
+        # Teacher self-registration is intentional for this fictional lab only.
+        raw = request.get_json(silent=True) if request.is_json else None
+        fields = ('name','email','password','role') if isinstance(raw, dict) and 'role' in raw else ('name','email','password')
+        data = read_payload(fields)
+        role = data.get('role', 'student')
+        if role not in ('student', 'professor'):
+            raise ValueError('Choose Student or Teacher.')
         name, email, password = name_value(data['name']), email_value(data['email']), password_value(data['password'])
         with database() as connection:
             key = limit_key('signup', request.remote_addr or 'unknown')
             if limit_row(connection, key):
                 return jsonify(error='Too many account requests. Please try again later.'), 429
             limit_failure(connection, key, 12)
-            actor = {'id': str(uuid.uuid4()), 'name': name, 'email': email, 'role': 'student'}
+            actor = {'id': str(uuid.uuid4()), 'name': name, 'email': email, 'role': role}
             row = connection.execute('''INSERT INTO users(id,name,email,password_hash,role)
-                VALUES(%s,%s,%s,%s,'student') ON CONFLICT(email) DO NOTHING RETURNING id''',
-                (actor['id'], name, email, generate_password_hash(password))).fetchone()
+                VALUES(%s,%s,%s,%s,%s) ON CONFLICT(email) DO NOTHING RETURNING id''',
+                (actor['id'], name, email, generate_password_hash(password), role)).fetchone()
             if not row:
                 audit(connection, None, 'signup_rejected', False)
                 return jsonify(error='Unable to create that account. Try signing in or use another address.'), 409
-            audit(connection, actor, 'account_created', True, 'student')
+            audit(connection, actor, 'account_created', True, role)
             return auth_response(connection, actor)
     except ValueError as error:
         return jsonify(error=str(error)), 400
@@ -330,6 +336,7 @@ def dashboard_response(connection, actor):
     else:
         courses = connection.execute('SELECT c.id,c.code,c.title FROM courses c JOIN enrollments e ON e.course_id=c.id WHERE e.student_id=%s ORDER BY c.code', (actor['id'],)).fetchall()
     return jsonify(actor=actor_json(actor), rows=rows, courses=courses, policy=controls,
+                   teachingCourses=connection.execute('SELECT c.id,c.code,c.title FROM courses c JOIN teaching_assignments a ON a.course_id=c.id WHERE a.user_id=%s ORDER BY c.code', (actor['id'],)).fetchall() if actor['role']=='professor' else [],
                    capabilities={'manageGrades':actor['role'] in ('professor','admin') or not rules['block_student_grade_edit'],'administer':actor['role']=='admin','readAudit':actor['role'] in ('professor','admin') or not rules['audit_professor_only']})
 
 
@@ -394,7 +401,7 @@ def set_role(connection, actor):
 
 
 @portal.post('/api/portal/courses')
-@endpoint(('admin',))
+@endpoint(('admin','professor'))
 def add_course(connection, actor):
     data=read_payload(('code','title'))
     code=data['code'].strip().upper() if isinstance(data['code'],str) else ''
@@ -404,8 +411,10 @@ def add_course(connection, actor):
     row=connection.execute('INSERT INTO courses(id,code,title) VALUES(%s,%s,%s) ON CONFLICT(code) DO NOTHING RETURNING id',(str(uuid.uuid4()),code,title)).fetchone()
     if not row:
         raise ValueError('That course code already exists.')
+    if actor['role'] == 'professor':
+        connection.execute('INSERT INTO teaching_assignments(user_id,course_id) VALUES(%s,%s)', (actor['id'], row['id']))
     audit(connection,actor,'course_created',True,code)
-    return jsonify(status='ok')
+    return jsonify(status='ok', courseId=str(row['id']))
 
 
 @portal.post('/api/portal/assignments')
@@ -443,3 +452,24 @@ def read_audit(connection, actor):
     else:
         rows=connection.execute('SELECT id,timestamp,actor_name AS "actorName",action,allowed,target FROM audit_events WHERE actor_id=%s ORDER BY id DESC LIMIT 100',(actor['id'],)).fetchall()
     return jsonify(events=rows)
+
+
+@portal.post('/api/portal/teaching/enrollments')
+@endpoint(('professor','admin'))
+def teaching_enrollment(connection, actor):
+    data = read_payload(('studentEmail','courseId'))
+    email, course = email_value(data['studentEmail']), valid_uuid(data['courseId'])
+    # Roster management is always restricted to an assigned teacher, even if
+    # the lab's grade-visibility switch is OFF. No student directory is exposed.
+    if actor['role'] == 'professor' and not connection.execute(
+        'SELECT 1 FROM teaching_assignments WHERE user_id=%s AND course_id=%s', (actor['id'], course)).fetchone():
+        audit(connection, actor, 'enrollment_denied', False, course)
+        return jsonify(error='You can only enroll students in a course assigned to you.'), 403
+    if not connection.execute('SELECT 1 FROM courses WHERE id=%s', (course,)).fetchone():
+        raise ValueError('Choose an existing course.')
+    student = connection.execute("SELECT id FROM users WHERE email=%s AND role='student' AND active", (email,)).fetchone()
+    if not student:
+        raise ValueError('No active student account matches that email. Ask the student to create an account first.')
+    connection.execute('INSERT INTO enrollments(student_id,course_id) VALUES(%s,%s) ON CONFLICT DO NOTHING', (student['id'], course))
+    audit(connection, actor, 'student_enrolled', True, str(student['id'])+'/'+course)
+    return jsonify(status='ok')
