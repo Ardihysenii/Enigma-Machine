@@ -9,7 +9,9 @@
   function notice(value, error = false) { message($('global-message'), value, error); $('global-message').hidden = !value; }
   function showTop(view) { ['loading', 'setup', 'auth', 'dashboard'].forEach((name) => { $(`${name}-view`).hidden = name !== view; }); }
   function clearPrivateData() {
-    $('teacher-tools').hidden = true; $('teacher-enrollment-course').replaceChildren();
+    text($('workspace-identity'), 'ACADEMIC WORKSPACE');
+    $('teacher-management').hidden = true; delete $('teacher-management').dataset.ready; $('teacher-tools').hidden = true; $('teacher-workspace-note').hidden = true;
+    ['teacher-enrollment-course', 'teacher-student-id', 'teacher-unassigned-course'].forEach(id => $(id).replaceChildren());
     state.epoch += 1; state.actor = null; state.dashboard = null; state.administration = null; state.dirty = false;
     $('professor-content').hidden = true; text($('professor-result'), '');
     ['overview-summary', 'course-preview', 'course-cards', 'records-body', 'record-summary', 'accounts-body', 'assignment-list', 'enrollment-list', 'audit-body'].forEach((id) => $(id).replaceChildren());
@@ -17,7 +19,7 @@
     ['actor-name', 'actor-role', 'actor-email', 'records-state', 'admin-state', 'audit-state', 'grade-message'].forEach((id) => text($(id), ''));
     document.querySelectorAll('#dashboard-view .form-message').forEach((el) => message(el, ''));
     $('admin-content').hidden = true;
-    ['role-form', 'assignment-form', 'enrollment-form', 'course-form', 'teacher-course-form', 'teacher-enrollment-form'].forEach((id) => $(id).reset());
+    ['role-form', 'assignment-form', 'enrollment-form', 'course-form', 'teacher-course-form', 'teacher-enrollment-form', 'teacher-assignment-form'].forEach((id) => $(id).reset());
     $('record-search').value = '';
     text($('overview-title'), 'Your academic workspace.');
     text($('scope-description'), 'Server-enforced permissions determine the records and actions available to you.');
@@ -114,9 +116,9 @@
     text($('actor-name'), actor.name); text($('actor-email'), actor.email); text($('actor-role'), roles[actor.role] || actor.role);
   }
   async function enterDashboard() {
-    state.view = 'overview'; state.dirty = false; applyActor(state.actor); showTop('dashboard');
+    state.view = state.actor.role === 'professor' ? 'records' : 'overview'; state.dirty = false; applyActor(state.actor); showTop('dashboard');
     document.querySelectorAll('[data-view]').forEach((button) => { button.hidden = button.dataset.view === 'administration'; });
-    switchView('overview', false); await refreshPolicy(false); await loadDashboard();
+    switchView(state.view, false); await refreshPolicy(false); await loadDashboard();
   }
   function permitted(view) {
     const caps = state.dashboard && state.dashboard.capabilities;
@@ -132,15 +134,15 @@
   }
   document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));
   function startLoad(name) { const id = (state.loads[name] || 0) + 1; state.loads[name] = id; const epoch = state.epoch; return () => state.epoch === epoch && state.loads[name] === id && Boolean(state.actor); }
-  async function loadDashboard(background = false) {
-    if (!state.actor || (background && isEditing())) return;
+  async function loadDashboard(background = false, force = false) {
+    if (!state.actor || (background && isEditing() && !force)) return;
     if (!background) state.dirty = false;
     const current = startLoad('dashboard');
     if (!background) text($('records-state'), 'Loading academic records…');
     try {
       const data = await api(background ? '/dashboard?poll=1' : '/dashboard'); if (!current()) return;
       if (!data.actor || !Array.isArray(data.rows) || !Array.isArray(data.courses) || !data.capabilities) throw new Error('The server returned incomplete academic records.');
-      if (background && isEditing()) { state.policyPending = true; return; }
+      if (background && isEditing() && !force) { state.policyPending = true; return; }
       applyDashboard(data);
 
     } catch (error) { if (current()) { clearAcademicData(); message($('records-state'), error.message, true); notice(error.message, true); } }
@@ -153,7 +155,7 @@
     const canEdit = Boolean(data.capabilities.manageGrades);
     $('grade-action-heading').hidden = !canEdit; $('grade-hint').hidden = !canEdit;
     $('records-body').replaceChildren();
-    message($('records-state'), rows.length ? `${rows.length} record${rows.length === 1 ? '' : 's'} · ${canEdit ? 'Grade changes are saved to fictional records.' : 'Read-only access.'}` : search ? 'No records match your search.' : filter ? 'No student records for this course yet.' : state.actor.role === 'student' ? 'No enrolled courses yet. Ask your teacher to enroll you using your account email.' : 'No student records yet. Teachers: open Courses to create a course and enroll students.');
+    message($('records-state'), rows.length ? `${rows.length} record${rows.length === 1 ? '' : 's'} · ${canEdit ? 'Grade changes are saved to fictional records.' : 'Read-only access.'}` : search ? 'No records match your search.' : filter ? 'No student records for this course yet.' : state.actor.role === 'student' ? 'No enrolled courses yet. Ask your teacher to enroll you using your account email.' : 'No student records yet. Open Manage courses & class roster above to connect a course and add students.');
     rows.forEach((row) => {
       const tr = node('tr'); const student = node('td'); student.append(node('span', row.studentName), node('small', row.studentEmail));
       const course = node('td'); course.append(node('span', row.courseCode), node('small', row.courseTitle));
@@ -196,13 +198,13 @@
       message($('admin-state'), data.users.length ? '' : 'No accounts returned by the server.'); $('admin-content').hidden = false;
     } catch (error) { if (current()) message($('admin-state'), error.message, true); }
   }
-  [['teacher-course-form', '/courses', 'Course created and assigned to you.'], ['teacher-enrollment-form', '/teaching/enrollments', 'Student enrolled. Open Grades to enter a grade.']].forEach(([id, path, success]) => {
+  [['teacher-course-form', '/courses', 'Course created. Add a student, then enter their grade below.'], ['teacher-enrollment-form', '/teaching/enrollments', 'Student added. Their grade row is available below.'], ['teacher-assignment-form', '/teaching/assignments', 'Course connected. Existing enrolled students and grades are shown below.']].forEach(([id, path, success]) => {
     $(id).addEventListener('submit', async (event) => {
       event.preventDefault(); const form = event.currentTarget;
       if (form.dataset.busy || !form.reportValidity()) return;
       const body = Object.fromEntries(new FormData(form)); const epoch = state.epoch;
       await busyForm(form, async () => {
-        try { await api(path, body); if (epoch !== state.epoch) return; form.reset(); state.dirty = false; await loadDashboard(); message(form.querySelector('.form-message'), success); }
+        try { await api(path, body); if (epoch !== state.epoch) return; form.reset(); state.dirty = false; await loadDashboard(); if ((state.dashboard?.teachingCourses || []).length) $('teacher-management').open = false; notice(success); message(form.querySelector('.form-message'), success); }
         catch (error) { if (epoch === state.epoch) message(form.querySelector('.form-message'), error.message, true); }
       });
     });
@@ -258,12 +260,12 @@
     block_student_professor_area: 'Teacher area restriction',
     block_student_grade_edit: 'Student grade-edit restriction',
     professor_assigned_courses_only: 'Assigned-course scope',
-    session_inactivity_timeout: '30-second idle timeout',
+    session_inactivity_timeout: 'Optional idle-timeout demo (30 seconds)',
     audit_professor_only: 'Access-history restriction'
   };
   function clearAcademicData() {
     state.dashboard = null; state.administration = null;
-    $('teacher-tools').hidden = true; $('teacher-enrollment-course').replaceChildren();
+    $('teacher-management').hidden = true; delete $('teacher-management').dataset.ready; $('teacher-tools').hidden = true; $('teacher-workspace-note').hidden = true; ['teacher-enrollment-course', 'teacher-student-id', 'teacher-unassigned-course'].forEach(id => $(id).replaceChildren());
     ['overview-summary', 'course-preview', 'course-cards', 'records-body', 'record-summary', 'accounts-body', 'assignment-list', 'enrollment-list', 'audit-body'].forEach((id) => $(id).replaceChildren());
     $('admin-content').hidden = true; $('professor-content').hidden = true;
     ['role-user', 'assignment-user', 'assignment-course', 'enrollment-student', 'enrollment-course'].forEach((id) => $(id).replaceChildren());
@@ -273,13 +275,28 @@
     const changed = state.actor && (state.actor.role !== data.actor.role || String(state.actor.id) !== String(data.actor.id));
     if (changed) {
       clearAcademicData(); state.epoch += 1; state.dirty = false;
-      ['role-form', 'assignment-form', 'enrollment-form', 'course-form'].forEach((id) => $(id).reset());
+      ['role-form', 'assignment-form', 'enrollment-form', 'course-form', 'teacher-course-form', 'teacher-enrollment-form', 'teacher-assignment-form'].forEach((id) => $(id).reset());
       text($('professor-result'), '');
       notice('Your account permissions changed. This workspace now reflects your current role.');
     }
+    if (data.policy) applyPolicy(data.policy);
     state.dashboard = data; state.actor = data.actor; applyActor(data.actor);
     const caps = data.capabilities;
-    $('teacher-tools').hidden = data.actor.role !== 'professor';
+    const isTeacher = data.actor.role === 'professor';
+    $('teacher-tools').hidden = !isTeacher;
+    $('teacher-management').hidden = !isTeacher;
+    if (isTeacher && !$('teacher-management').dataset.ready) { $('teacher-management').open = !(data.teachingCourses || []).length; $('teacher-management').dataset.ready = 'true'; }
+    $('teacher-workspace-note').hidden = !isTeacher;
+    text($('workspace-identity'), isTeacher ? 'TEACHER WORKSPACE' : data.actor.role === 'student' ? 'STUDENT WORKSPACE' : 'ADMINISTRATION');
+    document.querySelectorAll('.workspace-nav [data-view="professor"]').forEach(el => { el.hidden = data.actor.role !== 'student'; });
+    document.querySelectorAll('.workspace-nav [data-view="records"]').forEach(el => { el.lastChild.textContent = isTeacher ? 'Gradebook' : 'My grades'; });
+    const oldStudent = $('teacher-student-id').value;
+    fillSelect($('teacher-student-id'), (data.teachingStudents || []).map(u => [u.id, u.name + ' · ' + u.email]), 'Select a database student');
+    if ((data.teachingStudents || []).some(u => String(u.id) === oldStudent)) $('teacher-student-id').value = oldStudent;
+    const oldUnassigned = $('teacher-unassigned-course').value;
+    fillSelect($('teacher-unassigned-course'), (data.unassignedCourses || []).map(c => [c.id, c.code + ' · ' + c.title]), 'Select an unassigned course');
+    if ((data.unassignedCourses || []).some(c => String(c.id) === oldUnassigned)) $('teacher-unassigned-course').value = oldUnassigned;
+    text($('teacher-workspace-note'), (data.teachingCourses || []).length ? 'This gradebook shows students enrolled in your assigned courses. Add a database student above to enter their first grade. Saved changes appear in that student’s account. The assigned-course security switch controls whether other courses can be viewed or edited.' : 'You have no assigned courses yet. Connect an unassigned existing course or create a new one above. We do not silently grant access to another teacher’s classes.');
     const selectedTeachingCourse = $('teacher-enrollment-course').value;
     fillSelect($('teacher-enrollment-course'), (data.teachingCourses || []).map((c) => [c.id, c.code + ' · ' + c.title]), 'Choose your course');
     if ((data.teachingCourses || []).some((c) => String(c.id) === selectedTeachingCourse)) $('teacher-enrollment-course').value = selectedTeachingCourse;
@@ -290,10 +307,9 @@
     }
     if (!caps.readAudit) $('audit-body').replaceChildren();
     if (!permitted(state.view)) switchView('overview', false);
-    if (data.policy) applyPolicy(data.policy);
-    text($('records-title'), 'Academic grades.');
-    text($('records-description'), caps.manageGrades ? 'Review the records in your current scope. Permitted edits save to the database.' : 'Read the academic records available to your account.');
-    text($('overview-title'), data.actor.name ? 'Welcome, ' + data.actor.name.split(' ')[0] + '.' : 'Your academic workspace.');
+    text($('records-title'), isTeacher ? 'Teacher gradebook.' : data.actor.role === 'student' ? 'My grades.' : 'Academic grades.');
+    text($('records-description'), isTeacher ? 'Select students, enter new grades, or update saved grades. Every change is checked and saved by the server.' : caps.manageGrades ? 'The laboratory grade-edit restriction is OFF. Permitted changes save to fictional records.' : 'Your enrolled courses and saved results. Read-only while the grade-edit protection is ON.');
+    text($('overview-title'), isTeacher ? 'Teacher dashboard.' : data.actor.role === 'student' ? 'Student dashboard.' : 'Administrator dashboard.');
     text($('overview-description'), 'A focused view of the courses and recorded results available to your account.');
     text($('courses-description'), data.actor.role === 'student' ? 'Your enrolled courses, as returned by the server.' : data.actor.role === 'professor' ? 'Courses available under your current teaching permissions.' : 'The course catalog available to your administrator account.');
     text($('scope-description'), data.actor.role === 'student' ? 'Student scope is controlled by Task 01. Turning protections off can expose additional fictional records or enable grade editing. The server decides every request.' : 'Your current role and the active security controls determine course visibility and editing permissions.');
@@ -336,7 +352,7 @@
     const locked = student && state.policy?.rules?.block_student_professor_area !== false;
     text($('professor-access'), locked ? 'Teacher access is restricted.' : 'Request your available teaching workspace.');
     text($('professor-description'), locked ? 'Your student role is blocked by the active professor-area rule. Test it below to see the server response, not a simulated result.' : student ? 'The professor-area restriction is off. Access is still subject to the current own-grade and grade-edit controls.' : 'Request the professor endpoint with your real account permissions.');
-    text($('test-professor'), locked ? 'Test restricted access →' : 'Request professor access →');
+    text($('test-professor'), locked ? 'Test restricted access →' : 'Request teacher access →');
     text($('audit-access'), state.dashboard?.capabilities.readAudit ? 'Your current permissions allow access history. Only server-returned events are shown.' : 'Access history is restricted for your role. Refresh history to test the boundary and see the server’s response.');
   }
   function applyPolicy(data) {
@@ -351,7 +367,12 @@
       item.append(node('span', label), node('strong', enabled ? 'ON' : 'OFF')); $('policy-controls').append(item);
     });
     if (changed) {
-      state.policyPending = true; $('professor-content').hidden = true; text($('professor-result'), 'Policy changed. Request access again to test the current rules.');
+      state.loads.dashboard = (state.loads.dashboard || 0) + 1;
+      state.policyPending = true; state.dirty = false; state.dashboard = null;
+      ['records-body', 'overview-summary', 'course-preview', 'course-cards', 'audit-body'].forEach(id => $(id).replaceChildren());
+      $('grade-action-heading').hidden = true; $('grade-hint').hidden = true;
+      text($('records-state'), 'Security policy changed. Reloading authorized records…');
+      $('professor-content').hidden = true; text($('professor-result'), 'Policy changed. Request access again to test the current rules.');
       $('audit-body').replaceChildren();
     }
     if (state.actor) renderAccess();
@@ -374,8 +395,8 @@
         }
         if (session.csrfToken) state.csrf = session.csrfToken;
       }
-      if (withDashboard && state.actor && !isEditing()) {
-        await loadDashboard(true); state.policyPending = false;
+      if (withDashboard && state.actor && (!isEditing() || state.policyPending)) {
+        await loadDashboard(true, state.policyPending); state.policyPending = false;
       }
     } catch (error) { message($('policy-state'), 'Policy refresh unavailable: ' + error.message, true); }
     finally { state.polling = false; }
@@ -405,5 +426,16 @@
   window.addEventListener('focus', () => { void refreshPolicy(); });
   setInterval(() => { if (!document.hidden) void refreshPolicy(); }, 3000);
 
+  let activityAt = 0, lastActivitySent = 0, activityPending = false;
+  ['pointerdown', 'keydown', 'input', 'scroll'].forEach(type => document.addEventListener(type, event => {
+    if (event.isTrusted && state.actor && !document.hidden) activityAt = Date.now();
+  }, { passive: true }));
+  setInterval(async () => {
+    if (!state.actor || document.hidden || activityPending || activityAt <= lastActivitySent) return;
+    const sent = activityAt; activityPending = true;
+    try { await api('/activity', {}); lastActivitySent = sent; }
+    catch (error) { if (error.status !== 401) message($('policy-state'), 'Activity sync unavailable; your draft has not been submitted.', true); }
+    finally { activityPending = false; }
+  }, 8000);
   loadSession();
 })();

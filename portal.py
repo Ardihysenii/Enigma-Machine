@@ -13,11 +13,11 @@ from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from portal_policy import policy, validate_rules, IDLE_SECONDS
-from flask import Blueprint, current_app, jsonify, render_template, request
+from flask import Blueprint, current_app, jsonify, render_template, request, g
 from werkzeug.security import check_password_hash, generate_password_hash
 
 portal = Blueprint('portal', __name__)
-SESSION_HOURS = 12
+SESSION_HOURS = 24 * 30
 DUMMY_PASSWORD_HASH = generate_password_hash(secrets.token_urlsafe(24))
 
 
@@ -115,7 +115,8 @@ def current_actor(connection, touch=False):
         AND (NOT %s OR s.last_seen>now()-(%s * interval '1 second')) ''',
         (digest, idle_enabled, IDLE_SECONDS)).fetchone()
     if row and touch:
-        connection.execute('UPDATE sessions SET last_seen=now() WHERE token_hash=%s', (digest,))
+        connection.execute("UPDATE sessions SET last_seen=now(),expires_at=now()+(%s * interval '1 hour') WHERE token_hash=%s", (SESSION_HOURS, digest))
+        g.portal_session_touched = True
     return row
 
 
@@ -166,6 +167,27 @@ def protect_mutations():
     if not re.fullmatch(r'[A-Za-z0-9_-]{43}', cookie) or not secrets.compare_digest(cookie, header):
         return jsonify(error='Refresh the page before submitting this form.'), 403
     return None
+
+
+@portal.after_request
+def renew_portal_cookie(response):
+    # Only actual authenticated activity renews the browser's persisted cookie.
+    # Never undo explicit signout, and never renew from policy/session polling.
+    if getattr(g, 'portal_session_touched', False) and request.endpoint != 'portal.signout' and response.status_code < 400:
+        token = request.cookies.get(cookie_name('session'), '')
+        if re.fullmatch(r'[A-Za-z0-9_-]{64}', token):
+            set_cookie(response, 'session', token, SESSION_HOURS * 3600)
+            csrf = request.cookies.get(cookie_name('csrf'), '')
+            if re.fullmatch(r'[A-Za-z0-9_-]{43}', csrf):
+                set_cookie(response, 'csrf', csrf, SESSION_HOURS * 3600)
+    return response
+
+
+@portal.post('/api/portal/activity')
+@endpoint()
+def record_activity(connection, actor):
+    read_payload(())
+    return jsonify(status='ok')
 
 
 @portal.get('/college')
@@ -335,7 +357,14 @@ def dashboard_response(connection, actor):
         courses = connection.execute('SELECT c.id,c.code,c.title FROM courses c JOIN teaching_assignments a ON a.course_id=c.id WHERE a.user_id=%s ORDER BY c.code', (actor['id'],)).fetchall()
     else:
         courses = connection.execute('SELECT c.id,c.code,c.title FROM courses c JOIN enrollments e ON e.course_id=c.id WHERE e.student_id=%s ORDER BY c.code', (actor['id'],)).fetchall()
+    teaching_students, unassigned_courses = [], []
+    if actor['role'] in ('professor', 'admin'):
+        teaching_students = connection.execute("SELECT id,name,email FROM users WHERE role='student' AND active ORDER BY name,email").fetchall()
+        unassigned_courses = connection.execute('''SELECT c.id,c.code,c.title FROM courses c
+            WHERE NOT EXISTS(SELECT 1 FROM teaching_assignments a WHERE a.course_id=c.id)
+            ORDER BY c.code''').fetchall()
     return jsonify(actor=actor_json(actor), rows=rows, courses=courses, policy=controls,
+                   teachingStudents=teaching_students, unassignedCourses=unassigned_courses,
                    teachingCourses=connection.execute('SELECT c.id,c.code,c.title FROM courses c JOIN teaching_assignments a ON a.course_id=c.id WHERE a.user_id=%s ORDER BY c.code', (actor['id'],)).fetchall() if actor['role']=='professor' else [],
                    capabilities={'manageGrades':actor['role'] in ('professor','admin') or not rules['block_student_grade_edit'],'administer':actor['role']=='admin','readAudit':actor['role'] in ('professor','admin') or not rules['audit_professor_only']})
 
@@ -421,6 +450,7 @@ def add_course(connection, actor):
 @endpoint(('admin',))
 def assign_professor(connection, actor):
     data=read_payload(('userId','courseId'))
+    connection.execute('SELECT pg_advisory_xact_lock(74420301)')
     user,course=valid_uuid(data['userId']),valid_uuid(data['courseId'])
     if not connection.execute("SELECT 1 FROM users WHERE id=%s AND role='professor' AND active",(user,)).fetchone() or not connection.execute('SELECT 1 FROM courses WHERE id=%s',(course,)).fetchone():
         raise ValueError('Choose an active professor and an existing course.')
@@ -454,22 +484,49 @@ def read_audit(connection, actor):
     return jsonify(events=rows)
 
 
+@portal.post('/api/portal/teaching/assignments')
+@endpoint(('professor','admin'))
+def teaching_assignment(connection, actor):
+    data = read_payload(('courseId',))
+    course = valid_uuid(data['courseId'])
+    # Serialize explicit claims with role changes; never claim courses on signup.
+    connection.execute('SELECT pg_advisory_xact_lock(74420301)')
+    if not connection.execute('SELECT 1 FROM courses WHERE id=%s', (course,)).fetchone():
+        raise ValueError('Choose an existing course.')
+    assignments = connection.execute('SELECT user_id FROM teaching_assignments WHERE course_id=%s', (course,)).fetchall()
+    if any(str(row['user_id']) != str(actor['id']) for row in assignments):
+        audit(connection, actor, 'teaching_assignment_denied', False, course)
+        return jsonify(error='That course is already assigned to another teacher.'), 403
+    connection.execute('INSERT INTO teaching_assignments(user_id,course_id) VALUES(%s,%s) ON CONFLICT DO NOTHING', (actor['id'], course))
+    audit(connection, actor, 'professor_assigned', True, str(actor['id'])+'/'+course)
+    return jsonify(status='ok', courseId=course)
+
+
 @portal.post('/api/portal/teaching/enrollments')
 @endpoint(('professor','admin'))
 def teaching_enrollment(connection, actor):
-    data = read_payload(('studentEmail','courseId'))
-    email, course = email_value(data['studentEmail']), valid_uuid(data['courseId'])
-    # Roster management is always restricted to an assigned teacher, even if
-    # the lab's grade-visibility switch is OFF. No student directory is exposed.
+    # Accept exactly one supported student selector, never arbitrary extra fields.
+    if not request.is_json:
+        raise ValueError('Send a JSON object.')
+    data = request.get_json(silent=True)
+    if isinstance(data, dict) and set(data) == {'studentId', 'courseId'}:
+        data = read_payload(('studentId','courseId'))
+        selector, value = 'id', valid_uuid(data['studentId'])
+    else:
+        data = read_payload(('studentEmail','courseId'))
+        selector, value = 'email', email_value(data['studentEmail'])
+    course = valid_uuid(data['courseId'])
+    # Roster management stays assigned-only even with grade switches OFF.
     if actor['role'] == 'professor' and not connection.execute(
         'SELECT 1 FROM teaching_assignments WHERE user_id=%s AND course_id=%s', (actor['id'], course)).fetchone():
         audit(connection, actor, 'enrollment_denied', False, course)
         return jsonify(error='You can only enroll students in a course assigned to you.'), 403
     if not connection.execute('SELECT 1 FROM courses WHERE id=%s', (course,)).fetchone():
         raise ValueError('Choose an existing course.')
-    student = connection.execute("SELECT id FROM users WHERE email=%s AND role='student' AND active", (email,)).fetchone()
+    # selector is one of the two hard-coded identifiers above, not user SQL.
+    student = connection.execute("SELECT id FROM users WHERE " + selector + "=%s AND role='student' AND active", (value,)).fetchone()
     if not student:
-        raise ValueError('No active student account matches that email. Ask the student to create an account first.')
+        raise ValueError('No active student account matches that ' + ('email. Ask the student to create an account first.' if selector == 'email' else 'student ID.'))
     connection.execute('INSERT INTO enrollments(student_id,course_id) VALUES(%s,%s) ON CONFLICT DO NOTHING', (student['id'], course))
     audit(connection, actor, 'student_enrolled', True, str(student['id'])+'/'+course)
     return jsonify(status='ok')

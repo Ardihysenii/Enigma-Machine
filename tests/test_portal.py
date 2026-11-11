@@ -166,7 +166,48 @@ class PortalDatabaseTests(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.json)
         return client
 
+    def test_real_activity_renews_session_without_polling_or_signout_regressions(self):
+        client, actor = self.signup('activity-session')
+        with self.db() as connection:
+            connection.execute("UPDATE sessions SET last_seen=now()-interval '10 seconds',expires_at=now()+interval '1 hour' WHERE user_id=%s", (actor['id'],))
+            before = connection.execute('SELECT last_seen,expires_at FROM sessions WHERE user_id=%s', (actor['id'],)).fetchone()
+        self.assertEqual(client.get('/api/portal/dashboard?poll=1').status_code, 200)
+        with self.db() as connection:
+            self.assertEqual(connection.execute('SELECT last_seen,expires_at FROM sessions WHERE user_id=%s', (actor['id'],)).fetchone(), before)
+        self.assertEqual(self.post(client, 'activity', {}).status_code, 200)
+        cookie = client.get_cookie('enigma_portal_session')
+        self.assertIsNotNone(cookie)
+        with self.db() as connection:
+            after = connection.execute('SELECT last_seen,expires_at FROM sessions WHERE user_id=%s', (actor['id'],)).fetchone()
+        self.assertGreater(after[0], before[0])
+        self.assertGreater((after[1]-after[0]).total_seconds(), 29*24*3600)
+        self.assertEqual(self.post(client, 'signout', {}).status_code, 200)
+        self.assertIsNone(client.get_cookie('enigma_portal_session'))
+        self.assertEqual(self.post(client, 'activity', {}).status_code, 401)
+
+    def test_database_teacher_can_connect_existing_course_and_select_existing_students(self):
+        teacher, actor = self.signup('existing-roster-teacher')
+        student, account = self.signup('existing-roster-student')
+        course = str(uuid.uuid4())
+        with self.db() as connection:
+            connection.execute("UPDATE users SET role='professor' WHERE id=%s", (actor['id'],))
+            connection.execute('INSERT INTO courses(id,code,title) VALUES(%s,%s,%s)', (course, 'EX'+uuid.uuid4().hex[:10], 'Existing database course'))
+        dashboard = teacher.get('/api/portal/dashboard').json
+        self.assertIn(account['id'], [str(u['id']) for u in dashboard['teachingStudents']])
+        self.assertIn(course, [str(c['id']) for c in dashboard['unassignedCourses']])
+        self.assertEqual(self.post(teacher, 'teaching/assignments', {'courseId':course}).status_code, 200)
+        self.assertEqual(self.post(teacher, 'teaching/assignments', {'courseId':course}).status_code, 200)
+        self.assertEqual(self.post(teacher, 'teaching/enrollments', {'studentId':account['id'], 'courseId':course}).status_code, 200)
+        for grade in (7, 10):
+            response = self.post(teacher, 'grades', {'studentId':account['id'], 'courseId':course, 'grade':grade})
+            self.assertEqual(response.status_code, 200, response.json)
+            self.assertEqual(student.get('/api/portal/dashboard').json['rows'][0]['grade'], grade)
+        self.assertEqual(student.get('/api/portal/dashboard').json['teachingStudents'], [])
+        self.assertEqual(student.get('/api/portal/dashboard').json['unassignedCourses'], [])
+        self.assertEqual(self.post(student, 'teaching/assignments', {'courseId':course}).status_code, 403)
+
     def test_teacher_signup_course_enrollment_and_grade_workflow(self):
+        self.controls(session_inactivity_timeout=False)
         teacher = application.app.test_client()
         email = 'teacher-'+uuid.uuid4().hex+'@test.invalid'
         response = self.post(teacher, 'signup', {'name':'Lab Teacher', 'email':email, 'password':'A-long-test-password-123', 'role':'professor'})
@@ -193,7 +234,7 @@ class PortalDatabaseTests(unittest.TestCase):
         self.assertEqual(self.post(student, 'courses', {'code':'DENIED', 'title':'Denied course'}).status_code, 403)
         self.assertEqual(self.post(student, 'teaching/enrollments', {'studentEmail':other_actor['email'], 'courseId':course}).status_code, 403)
         self.controls(student_own_grades_only=False)
-        self.assertEqual(len(student.get('/api/portal/dashboard').json['rows']), 2)
+        self.assertEqual(len([r for r in student.get('/api/portal/dashboard').json['rows'] if str(r['courseId']) == course]), 2)
         self.controls(student_own_grades_only=True)
         self.assertEqual(len(student.get('/api/portal/dashboard').json['rows']), 1)
         unassigned = str(uuid.uuid4())
@@ -232,6 +273,7 @@ class PortalDatabaseTests(unittest.TestCase):
         self.assertEqual(client.post('/api/portal/signout',json={},headers={'X-CSRF-Token':'wrong'}).status_code,403)
 
     def test_admin_roles_course_scope_and_student_records(self):
+        self.controls(session_inactivity_timeout=False)
         admin=self.admin()
         student,s=self.signup('enrolled')
         other,o=self.signup('otherstudent')
