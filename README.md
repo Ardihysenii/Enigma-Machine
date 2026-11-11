@@ -2,13 +2,13 @@
 
 ## Unified college portal and Task 01
 
-`/college` is the only college dashboard. It provides real signup/signin with fictional student, professor and administrator accounts. Old `/college/demo` and professor pages redirect to `/college`; the identity-switching APIs return HTTP 410 and cannot change records.
+`/college` is the only college dashboard. It provides signup/signin with fictional accounts. Signup offers Student or Teacher (stored internally as professor); administrator registration is never public. This is deliberately an unverified teacher self-registration lab, not a real college access model. Sign-in uses the saved account role, not a client-selected privilege. Old `/college/demo` and professor pages redirect to `/college`; the identity-switching APIs return HTTP 410 and cannot change records.
 
 Task 01 now controls this same signed-in portal. Its six switches are shared across all accounts and stored in PostgreSQL. All six default to ON. Turning a switch off intentionally permits the corresponding insecure behavior on saved fictional grades. Anyone operating the lab panel can change this demonstration policy; this is deliberately not a production access model. Never use real student data.
 
 The six controls restrict student reads to their own records, block student professor-area access, block student grade edits, restrict professors to assigned courses, enforce a 30-second inactivity timeout, and restrict audit access to professors/admins. The own-record rule independently limits student edits even when grade editing is enabled. Background policy/dashboard polling does not refresh activity. Absolute session expiry remains 12 hours regardless of switches. Sign-in, CSRF, role changes and administrator management cannot be disabled by Task 01.
 
-Accounts, enrollments, grades, policy and audit persist in the `enigma_portal` schema. New students have no invented courses or grades: an administrator creates courses, enrolls students and assigns professors. The portal includes Overview, Grades, Courses, Professor area, Access history and administrator views. Grade changes accept integers 5–10. Grade changes with controls off are real persisted changes to fictional data, not a visual simulation.
+Accounts, enrollments, grades, policy and audit persist in the `enigma_portal` schema. New students have no invented courses or grades: a teacher can create a course (automatically assigned to them), enroll an existing student by account email in their own course, and save grades from Grades. Administrators can also create courses, enroll students and assign teachers. Existing courses still need an administrator assignment before a newly registered teacher can manage their roster. The portal includes Overview, Grades, Courses, Professor area, Access history and administrator views. Grade changes accept integers 5–10. Grade changes with controls off are real persisted changes to fictional data, not a visual simulation.
 
 ### Setup and updates
 
