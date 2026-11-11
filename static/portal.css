@@ -226,3 +226,16 @@ td small { display: block; color: var(--muted); font-size: 10px; margin-top: 6px
   .workspace-panel { animation: reveal .22s ease-out; }
   @keyframes reveal { from { opacity: .4; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 }
+
+/* Role-specific teaching controls; the student workspace never receives the directory. */
+.teacher-tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 20px 0 26px; }
+.teacher-tools .form-card { padding: 22px; }
+.teacher-tools .form-card h2 { font-size: 19px; }
+.teacher-tools select { font-size: 12px; }
+.teacher-tools .form-card > p { min-height: 76px; }
+#teacher-workspace-note { margin-bottom: 28px; }
+@media (max-width: 1150px) { .teacher-tools { grid-template-columns: 1fr; } .teacher-tools .form-card > p { min-height: 0; } }
+
+.teacher-management { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 16px; background: var(--surface); }
+.teacher-management > summary { padding: 16px 20px; color: var(--gold); cursor: pointer; font-size: 13px; }
+.teacher-management .teacher-tools { margin: 0; padding: 0 16px 16px; }
