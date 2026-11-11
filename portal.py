@@ -359,7 +359,7 @@ def dashboard_response(connection, actor):
         courses = connection.execute('SELECT c.id,c.code,c.title FROM courses c JOIN enrollments e ON e.course_id=c.id WHERE e.student_id=%s ORDER BY c.code', (actor['id'],)).fetchall()
     teaching_students, unassigned_courses = [], []
     if actor['role'] in ('professor', 'admin'):
-        teaching_students = connection.execute("SELECT id,name,email FROM users WHERE role='student' AND active ORDER BY name,email").fetchall()
+        teaching_students = connection.execute("SELECT id,name,email,active FROM users WHERE role='student' ORDER BY name,email").fetchall()
         unassigned_courses = connection.execute('''SELECT c.id,c.code,c.title FROM courses c
             WHERE NOT EXISTS(SELECT 1 FROM teaching_assignments a WHERE a.course_id=c.id)
             ORDER BY c.code''').fetchall()
@@ -477,7 +477,8 @@ def read_audit(connection, actor):
     if actor['role'] == 'student' and policy(connection)['rules']['audit_professor_only']:
         audit(connection, actor, 'access_denied', False, request.path)
         return jsonify(error='Your role does not allow this action.'), 403
-    if actor['role']=='admin':
+    if actor['role'] in ('admin', 'professor'):
+        # Fictional-campus staff can follow student signups, enrollment and grade changes.
         rows=connection.execute('SELECT id,timestamp,actor_name AS "actorName",action,allowed,target FROM audit_events ORDER BY id DESC LIMIT 100').fetchall()
     else:
         rows=connection.execute('SELECT id,timestamp,actor_name AS "actorName",action,allowed,target FROM audit_events WHERE actor_id=%s ORDER BY id DESC LIMIT 100',(actor['id'],)).fetchall()
