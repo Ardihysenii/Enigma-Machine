@@ -87,6 +87,9 @@ def analysis(p, state):
 
 
 def classical(p, state):
+    if p.get('operation') == 'find_key':
+        from caesar_analysis import find_caesar_key
+        return find_caesar_key(text(p, 'message'), text(p, 'cipher', 'caesar'))
     message = text(p, 'message')
     cipher = text(p, 'cipher', 'caesar')
     operation = text(p, 'operation', 'encrypt')
