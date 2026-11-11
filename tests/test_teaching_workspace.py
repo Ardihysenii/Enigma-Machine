@@ -57,8 +57,8 @@ class TeachingWorkspaceTests(unittest.TestCase):
             result.fetchone.return_value = {'id': STUDENT} if self.student_exists else None
         elif query.startswith('SELECT user_id FROM teaching_assignments'):
             result.fetchall.return_value = [{'user_id': user} for user in self.assignments]
-        elif query.startswith('SELECT id,name,email FROM users'):
-            result.fetchall.return_value = [{'id': STUDENT, 'name': 'Lab Student', 'email': 'student@test.invalid'}]
+        elif query.startswith('SELECT id,name,email,active FROM users'):
+            result.fetchall.return_value = [{'id': STUDENT, 'name': 'Lab Student', 'email': 'student@test.invalid', 'active': True}]
         elif 'WHERE NOT EXISTS(SELECT 1 FROM teaching_assignments' in query:
             result.fetchall.return_value = [{'id': COURSE, 'code': 'LAB101', 'title': 'Lab Course'}]
         elif query.startswith('SELECT 1 FROM enrollments'):
@@ -77,10 +77,39 @@ class TeachingWorkspaceTests(unittest.TestCase):
     def test_teacher_directory_contains_only_public_student_fields(self):
         response = self.client.get('/api/portal/dashboard')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json['teachingStudents'], [{'id': STUDENT, 'name': 'Lab Student', 'email': 'student@test.invalid'}])
-        query = self.queries('SELECT id,name,email FROM users')[0][0]
-        self.assertIn("role='student' AND active", query)
+        self.assertEqual(response.json['teachingStudents'], [{'id': STUDENT, 'name': 'Lab Student', 'email': 'student@test.invalid', 'active': True}])
+        query = self.queries('SELECT id,name,email,active FROM users')[0][0]
+        self.assertIn("role='student'", query)
         self.assertEqual(response.json['unassignedCourses'][0]['id'], COURSE)
+
+    def test_directory_is_independent_of_enrollment_and_course_assignment(self):
+        self.assigned = False
+        self.enrolled = False
+        response = self.client.get('/api/portal/dashboard')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['rows'], [])
+        self.assertEqual(response.json['teachingStudents'][0]['id'], STUDENT)
+        query = self.queries('SELECT id,name,email,active FROM users')[0][0]
+        self.assertNotIn('AND active', query)
+        self.assertNotIn('password', query)
+
+    def test_teacher_reads_campus_activity_not_only_own_events(self):
+        response = self.client.get('/api/portal/audit')
+        self.assertEqual(response.status_code, 200)
+        query, params = self.queries('FROM audit_events')[0]
+        self.assertNotIn('WHERE actor_id=', query)
+        self.assertIn('LIMIT 100', query)
+        self.assertEqual(params, ())
+
+    def test_student_activity_still_follows_security_switch(self):
+        self.actor.update(role='student', id=STUDENT)
+        self.assertEqual(self.client.get('/api/portal/audit').status_code, 403)
+        self.rules['audit_professor_only'] = False
+        self.calls.clear()
+        self.assertEqual(self.client.get('/api/portal/audit').status_code, 200)
+        query, params = self.queries('FROM audit_events')[0]
+        self.assertIn('WHERE actor_id=%s', query)
+        self.assertEqual(params, (STUDENT,))
 
     def test_admin_has_directory_and_unassigned_courses(self):
         self.actor['role'] = 'admin'
@@ -99,7 +128,7 @@ class TeachingWorkspaceTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json['teachingStudents'], [])
                 self.assertEqual(response.json['unassignedCourses'], [])
-                self.assertFalse(self.queries('SELECT id,name,email FROM users'))
+                self.assertFalse(self.queries('SELECT id,name,email,active FROM users'))
                 self.assertFalse(self.queries('WHERE NOT EXISTS(SELECT 1 FROM teaching_assignments'))
 
     def test_existing_grade_visibility_filters_follow_switches(self):
