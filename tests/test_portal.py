@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import unittest
 import uuid
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import psycopg
 from psycopg import sql
@@ -25,6 +25,62 @@ class PortalPolicyValidation(unittest.TestCase):
 
 
 class PortalWithoutDatabase(unittest.TestCase):
+    def test_signup_persists_selected_role(self):
+        from flask import jsonify
+        application.app.config.update(TESTING=True, CLOUD_DEMO=False)
+        for role in ('student', 'professor'):
+            client = application.app.test_client()
+            csrf = 'a' * 43
+            client.set_cookie('enigma_portal_csrf', csrf)
+            connection = MagicMock()
+            connection.execute.return_value.fetchone.return_value = {'id': str(uuid.uuid4())}
+            with patch('portal.database') as database, patch('portal.limit_row', return_value=False), patch('portal.limit_failure'), patch('portal.audit'), patch('portal.auth_response', side_effect=lambda c,a: jsonify(actor=a)):
+                database.return_value.__enter__.return_value = connection
+                response = client.post('/api/portal/signup', json={'name':'Lab Account', 'email':'lab@example.test', 'password':'Disposable-password-123', 'role':role}, headers={'X-CSRF-Token':csrf})
+            self.assertEqual(response.status_code, 200, response.json)
+            self.assertEqual(response.json['actor']['role'], role)
+            inserts = [c for c in connection.execute.call_args_list if 'INSERT INTO users' in c.args[0]]
+            self.assertEqual(inserts[0].args[1][-1], role)
+
+    def test_teacher_course_is_automatically_assigned(self):
+        application.app.config.update(TESTING=True, CLOUD_DEMO=False)
+        client = application.app.test_client()
+        csrf = 'a' * 43
+        client.set_cookie('enigma_portal_csrf', csrf)
+        actor = {'id':str(uuid.uuid4()), 'name':'Teacher', 'email':'teacher@example.test', 'role':'professor'}
+        course = str(uuid.uuid4())
+        connection = MagicMock()
+        connection.execute.return_value.fetchone.return_value = {'id':course}
+        with patch('portal.database') as database, patch('portal.current_actor', return_value=actor), patch('portal.audit'):
+            database.return_value.__enter__.return_value = connection
+            response = client.post('/api/portal/courses', json={'code':'SEC101', 'title':'Information Security'}, headers={'X-CSRF-Token':csrf})
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json['courseId'], course)
+        assignments = [c for c in connection.execute.call_args_list if 'INSERT INTO teaching_assignments' in c.args[0]]
+        self.assertEqual(assignments[0].args[1], (actor['id'], course))
+
+    def test_signup_rejects_admin_and_unsupported_roles_before_database(self):
+        application.app.config.update(TESTING=True, CLOUD_DEMO=False)
+        client = application.app.test_client()
+        csrf = 'a' * 43
+        client.set_cookie('enigma_portal_csrf', csrf)
+        for role in ('admin', 'teacher', '', None, [], {}):
+            response = client.post('/api/portal/signup', json={'name':'Lab Account', 'email':'lab@example.test', 'password':'Disposable-password-123', 'role':role}, headers={'X-CSRF-Token':csrf})
+            self.assertEqual(response.status_code, 400, response.json)
+
+    def test_signup_form_has_student_and_teacher_but_not_admin(self):
+        html = application.app.test_client().get('/college').get_data(as_text=True)
+        form = html.split('<form id="signup-form">', 1)[1].split('</form>', 1)[0]
+        self.assertIn('value="student"', form)
+        self.assertIn('value="professor"', form)
+        self.assertNotIn('value="admin"', form)
+        self.assertIn('id="teacher-enrollment-form"', html)
+
+    def test_teacher_actions_always_require_csrf(self):
+        client = application.app.test_client()
+        for route in ('courses', 'teaching/enrollments'):
+            self.assertEqual(client.post('/api/portal/'+route, json={}).status_code, 403)
+
     def test_setup_is_honest_and_mutations_require_csrf(self):
         with patch.dict(os.environ, {}, clear=True):
             application.app.config.update(TESTING=True,PORTAL_DATABASE_URL=None)
@@ -109,6 +165,42 @@ class PortalDatabaseTests(unittest.TestCase):
         response=self.post(client,'signin',{'email':'admin@test.invalid','password':'A-long-test-password-123'})
         self.assertEqual(response.status_code,200,response.json)
         return client
+
+    def test_teacher_signup_course_enrollment_and_grade_workflow(self):
+        teacher = application.app.test_client()
+        email = 'teacher-'+uuid.uuid4().hex+'@test.invalid'
+        response = self.post(teacher, 'signup', {'name':'Lab Teacher', 'email':email, 'password':'A-long-test-password-123', 'role':'professor'})
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json['actor']['role'], 'professor')
+        self.assertEqual(teacher.get('/api/portal/administration').status_code, 403)
+        student, actor = self.signup('new-enrolled')
+        other, other_actor = self.signup('new-other')
+        code = 'LAB'+uuid.uuid4().hex[:10]
+        response = self.post(teacher, 'courses', {'code':code, 'title':'Teacher course'})
+        self.assertEqual(response.status_code, 200, response.json)
+        course = response.json['courseId']
+        dashboard = teacher.get('/api/portal/dashboard').json
+        self.assertIn(course, [str(c['id']) for c in dashboard['teachingCourses']])
+        for account in (actor, other_actor):
+            enrolled = self.post(teacher, 'teaching/enrollments', {'studentEmail':account['email'], 'courseId':course})
+            self.assertEqual(enrolled.status_code, 200, enrolled.json)
+        self.assertEqual(self.post(teacher, 'grades', {'studentId':actor['id'], 'courseId':course, 'grade':9}).status_code, 200)
+        rows = student.get('/api/portal/dashboard').json['rows']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['grade'], 9)
+        self.assertEqual(str(rows[0]['studentId']), actor['id'])
+        self.assertEqual(self.post(student, 'grades', {'studentId':actor['id'], 'courseId':course, 'grade':10}).status_code, 403)
+        self.assertEqual(self.post(student, 'courses', {'code':'DENIED', 'title':'Denied course'}).status_code, 403)
+        self.assertEqual(self.post(student, 'teaching/enrollments', {'studentEmail':other_actor['email'], 'courseId':course}).status_code, 403)
+        self.controls(student_own_grades_only=False)
+        self.assertEqual(len(student.get('/api/portal/dashboard').json['rows']), 2)
+        self.controls(student_own_grades_only=True)
+        self.assertEqual(len(student.get('/api/portal/dashboard').json['rows']), 1)
+        unassigned = str(uuid.uuid4())
+        with self.db() as connection:
+            connection.execute('INSERT INTO courses(id,code,title) VALUES(%s,%s,%s)', (unassigned,'U'+uuid.uuid4().hex[:10],'Another teacher course'))
+        self.assertEqual(self.post(teacher, 'teaching/enrollments', {'studentEmail':actor['email'], 'courseId':unassigned}).status_code, 403)
+        self.assertEqual(self.post(teacher, 'grades', {'studentId':actor['id'], 'courseId':unassigned, 'grade':9}).status_code, 403)
 
     def test_signup_student_only_and_no_plaintext_tokens(self):
         client,actor=self.signup('student')
