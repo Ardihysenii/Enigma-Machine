@@ -1,0 +1,13 @@
+#find-caesar-key[hidden], #caesar-key-results[hidden] { display:none !important; }
+.caesar-key-results { margin-top:24px; padding:22px; border:1px solid #66563b; border-radius:12px; background:#191b1e; color:#edece7; }
+.caesar-key-results h2 { font-size:20px; margin:0 0 12px; }
+.caesar-key-results p { line-height:1.65; font-size:13px; }
+.caesar-confidence { color:#dbc18e; }
+.caesar-candidate { margin:14px 0; padding:16px; border:1px solid #373a40; border-radius:9px; background:#141618; }
+.caesar-candidate.best { border-color:#806b45; }
+.caesar-candidate-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.caesar-candidate-heading h3 { font-size:14px; margin:0; }
+.caesar-key-results pre { font:14px/1.7 Consolas,monospace; color:#edece7; white-space:pre-wrap; overflow-wrap:anywhere; max-height:240px; overflow:auto; margin-bottom:0; }
+.caesar-key-results summary { color:#dbc18e; padding:14px 0; cursor:pointer; font-size:13px; }
+.caesar-key-results .caesar-method { color:#a8abb2; font-size:12px; margin-bottom:0; }
+@media(max-width:600px) { .caesar-key-results { padding:16px; } .caesar-candidate-heading button { width:100%; } }
