@@ -34,7 +34,7 @@ class PortalWithoutDatabase(unittest.TestCase):
             client.set_cookie('enigma_portal_csrf', csrf)
             connection = MagicMock()
             connection.execute.return_value.fetchone.return_value = {'id': str(uuid.uuid4())}
-            with patch('portal.database') as database, patch('portal.limit_row', return_value=False), patch('portal.limit_failure'), patch('portal.audit'), patch('portal.auth_response', side_effect=lambda c,a: jsonify(actor=a)):
+            with patch('portal.database') as database, patch('portal.limit_row', return_value=False), patch('portal.limit_failure'), patch('portal.audit'), patch('portal.auth_response', side_effect=lambda c,a: jsonify(actor=a)), patch('token_auth.pending_response', side_effect=lambda c,a: jsonify(actor=a)):
                 database.return_value.__enter__.return_value = connection
                 response = client.post('/api/portal/signup', json={'name':'Lab Account', 'email':'lab@example.test', 'password':'Disposable-password-123', 'role':role}, headers={'X-CSRF-Token':csrf})
             self.assertEqual(response.status_code, 200, response.json)
@@ -158,6 +158,12 @@ class PortalDatabaseTests(unittest.TestCase):
         email=label+'-'+uuid.uuid4().hex[:10]+'@test.invalid'
         response=self.post(client,'signup',{'name':'Test '+label,'email':email,'password':'A-long-test-password-123'})
         self.assertEqual(response.status_code,200,response.json)
+        if response.json.get('pending'):
+            self.assertIsNone(client.get_cookie('enigma_portal_session'))
+            self.assertEqual(self.post(client,'token/enroll',{'pin':'test-passphrase-123'}).status_code,200)
+            challenge=self.post(client,'token/challenge',{}).json
+            response=self.post(client,'token/verify',{'pin':'test-passphrase-123','test':'normal','challengeId':challenge['challengeId']})
+            self.assertEqual(response.status_code,200,response.json)
         return client,response.json['actor']
 
     def admin(self):
@@ -269,6 +275,11 @@ class PortalDatabaseTests(unittest.TestCase):
         self.assertEqual(wrong.status_code,401)
         valid=self.post(client,'signin',{'email':actor['email'],'password':'A-long-test-password-123'})
         self.assertEqual(valid.status_code,200,valid.json)
+        self.assertTrue(valid.json['pending'])
+        self.assertIsNone(client.get_cookie('enigma_portal_session'))
+        challenge=self.post(client,'token/challenge',{}).json
+        verified=self.post(client,'token/verify',{'pin':'test-passphrase-123','test':'normal','challengeId':challenge['challengeId']})
+        self.assertEqual(verified.status_code,200,verified.json)
         self.assertNotEqual(client.get_cookie('enigma_portal_session').value,token)
         self.assertEqual(client.post('/api/portal/signout',json={},headers={'X-CSRF-Token':'wrong'}).status_code,403)
 
@@ -503,6 +514,75 @@ class PortalDatabaseTests(unittest.TestCase):
                 connection.execute('ALTER TABLE lab_policy_missing RENAME TO lab_policy')
         self.assertEqual(application.app.test_client().get('/api/portal/session').status_code, 200)
 
+
+
+    def test_token_pending_signup_password_only_cannot_access_portal(self):
+        client=application.app.test_client()
+        email='pending-'+uuid.uuid4().hex+'@test.invalid'
+        result=self.post(client,'signup',{'name':'Pending Student','email':email,'password':'A-long-test-password-123'})
+        self.assertTrue(result.json['pending']);self.assertIsNone(result.json['actor'])
+        self.assertIsNone(client.get_cookie('enigma_portal_session'))
+        self.assertEqual(client.get('/api/portal/dashboard').status_code,401)
+        pending=client.get_cookie('enigma_portal_pending');self.assertTrue(pending.http_only)
+        identifier=result.json['pendingActor']['id']
+        with self.db() as connection:
+            row=connection.execute('SELECT ticket_hash FROM token_pending WHERE user_id=%s',(identifier,)).fetchone()
+            self.assertEqual(row[0],hashlib.sha256(pending.value.encode()).hexdigest())
+            self.assertIsNone(connection.execute('SELECT 1 FROM sessions WHERE user_id=%s',(identifier,)).fetchone())
+            connection.execute("UPDATE token_pending SET expires_at=now()-interval '1 second' WHERE user_id=%s",(identifier,))
+        self.assertEqual(self.post(client,'token/enroll',{'pin':'long-test-pin'}).status_code,401)
+
+    def test_token_negative_replay_expiry_lock_and_ciphertext_in_postgres(self):
+        client,actor=self.signup('token-negative')
+        def challenge():
+            return self.post(client,'token/challenge',{}).json['challengeId']
+        def verify(identifier,pin='test-passphrase-123',test='normal'):
+            return self.post(client,'token/verify',dict(pin=pin,test=test,challengeId=identifier))
+        identifier=challenge()
+        self.assertEqual(verify(identifier,test='altered').status_code,401)
+        self.assertEqual(verify(identifier).status_code,409)
+        self.assertEqual(verify(challenge(),test='wrong_key').status_code,401)
+        identifier=challenge()
+        with self.db() as connection:
+            connection.execute("UPDATE token_challenges SET expires_at=now()-interval '1 second' WHERE id=%s",(identifier,))
+            row=connection.execute('SELECT private_key_encrypted,pin_hash FROM software_tokens WHERE user_id=%s',(actor['id'],)).fetchone()
+            self.assertTrue(row[0].startswith('-----BEGIN ENCRYPTED PRIVATE KEY-----'))
+            self.assertNotIn('test-passphrase-123',repr(row))
+        self.assertEqual(verify(identifier).status_code,409)
+        for _ in range(3):self.assertEqual(verify(challenge(),pin='wrong-pin').status_code,401)
+        self.assertEqual(self.post(client,'token/challenge',{}).status_code,409)
+        with self.db() as connection:
+            self.assertEqual(connection.execute('SELECT status FROM software_tokens WHERE user_id=%s',(actor['id'],)).fetchone()[0],'locked')
+
+    def test_token_single_use_across_concurrent_database_connections(self):
+        from concurrent.futures import ThreadPoolExecutor
+        client,actor=self.signup('token-concurrent')
+        csrf=client.get('/api/portal/session').json['csrfToken']
+        challenge=self.post(client,'token/challenge',{}).json['challengeId']
+        session=client.get_cookie('enigma_portal_session').value
+        def verify():
+            other=application.app.test_client()
+            other.set_cookie('enigma_portal_session',session);other.set_cookie('enigma_portal_csrf',csrf)
+            return other.post('/api/portal/token/verify',json={'pin':'test-passphrase-123','test':'normal','challengeId':challenge},headers={'X-CSRF-Token':csrf}).status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            statuses=list(pool.map(lambda _:verify(),range(2)))
+        self.assertEqual(sorted(statuses),[200,409])
+
+
+    def test_token_automatic_setup_is_additive_and_honors_test_schema(self):
+        # Only this test class's throwaway schema is modified.
+        before=None
+        with self.db() as connection:
+            before=connection.execute('SELECT count(*) FROM users').fetchone()[0]
+            for table in ('token_verified_sessions','token_challenges','token_pending','software_tokens'):
+                connection.execute(sql.SQL('DROP TABLE {}').format(sql.Identifier(table)))
+            connection.execute('DELETE FROM schema_versions WHERE version=3')
+        response=application.app.test_client().get('/api/portal/session')
+        self.assertEqual(response.status_code,200,response.json)
+        with self.db() as connection:
+            self.assertEqual(connection.execute('SELECT count(*) FROM users').fetchone()[0],before)
+            self.assertEqual(connection.execute('SELECT version FROM schema_versions WHERE version=3').fetchone()[0],3)
+            self.assertIsNotNone(connection.execute("SELECT to_regclass('token_verified_sessions')").fetchone()[0])
 
 if __name__=='__main__':
     unittest.main()
