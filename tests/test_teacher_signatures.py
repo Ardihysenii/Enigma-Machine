@@ -69,9 +69,9 @@ class TeacherSignatureTests(unittest.TestCase):
     def test_workspace_and_assets_render_without_changing_rsa(self):
         page=self.client.get('/')
         self.assertEqual(page.status_code,200)
-        self.assertIn(b'id="ts-pad"',page.data)
+        self.assertIn(b'id="cn-pad"',page.data)
         self.assertIn(b'id="rsa-demo"',page.data)
-        for path in ('/static/teacher-signatures.js','/static/teacher-signatures.css'):
+        for path in ('/static/course-notices.js','/static/course-notices.css'):
             with self.client.get(path) as response:
                 self.assertEqual(response.status_code,200)
         self.assertIn(b'id="teacher-signature-link"',self.client.get('/college').data)
