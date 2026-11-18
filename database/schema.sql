@@ -109,3 +109,27 @@ CREATE TABLE IF NOT EXISTS enigma_portal.token_verified_sessions (
   token_hash char(64) PRIMARY KEY REFERENCES enigma_portal.sessions(token_hash) ON DELETE CASCADE
 );
 INSERT INTO enigma_portal.schema_versions(version) VALUES(3) ON CONFLICT DO NOTHING;
+
+
+-- Version 4: persisted fictional signed course notices. Also applied lazily by notice routes.
+
+CREATE TABLE IF NOT EXISTS enigma_portal.course_notices (
+  id uuid PRIMARY KEY,
+  course_id uuid NOT NULL REFERENCES enigma_portal.courses(id),
+  teacher_id uuid NOT NULL REFERENCES enigma_portal.users(id),
+  request_id uuid NOT NULL,
+  request_hash char(64) NOT NULL,
+  course_code varchar(24) NOT NULL,
+  teacher_name varchar(100) NOT NULL,
+  title varchar(160) NOT NULL,
+  published_at timestamptz NOT NULL,
+  payload jsonb NOT NULL CHECK (jsonb_typeof(payload) = 'object'),
+  signature text NOT NULL,
+  public_key text NOT NULL,
+  public_key_fingerprint char(64) NOT NULL,
+  algorithm text NOT NULL,
+  UNIQUE(teacher_id,request_id)
+);
+CREATE INDEX IF NOT EXISTS course_notices_course_time ON enigma_portal.course_notices(course_id,published_at DESC,id DESC);
+
+INSERT INTO enigma_portal.schema_versions(version) VALUES(4) ON CONFLICT DO NOTHING;
