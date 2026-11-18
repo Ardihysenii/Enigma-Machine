@@ -16,6 +16,8 @@
   <script src="{{ url_for('static', filename='caesar-analysis.js', v='1') }}" defer></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='rsa-demo.css', v='1') }}">
   <script src="{{ url_for('static', filename='rsa-demo.js', v='1') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='teacher-signatures.css', v='1') }}">
+  <script src="{{ url_for('static', filename='teacher-signatures.js', v='1') }}" defer></script>
 </head>
 <body class="enigma-refined lab-workspace">
 <a class="skip" href="#main">Skip to workspace</a>
@@ -56,6 +58,7 @@
       <a class="back-link" href="#overview">← Back to overview</a>
       <div class="task-heading"><div><p id="task-phase" class="eyebrow"></p><h1 id="task-title"></h1><p id="task-description" class="intro"></p></div><span class="pill">Implementation pending</span></div>
       {% include 'rsa-demo.html' %}
+      {% include 'teacher-signatures.html' %}
       <div class="workspace-grid"><article class="panel"><div class="panel-heading"><span id="workspace-number" class="workspace-number"></span><div><h2 id="workspace-title">Task workspace</h2><p>Input → Python operation → actual result</p></div></div>
         <form id="task-form"><label for="message" id="message-label">Fictional sample message</label><textarea id="message" maxlength="2000" rows="5" placeholder="Use fictional content only. No private keys, PINs or personal records."></textarea><div class="field-meta"><span>Fictional messages only. Use designated fields for disposable lab credentials.</span><span id="character-count">0 / 2000</span></div><div id="classical-options" hidden class="form-row"><div><label for="cipher">Cipher</label><select id="cipher"><option value="caesar">Caesar</option><option value="vigenere">Vigenère</option></select></div><div><label for="operation">Operation</label><select id="operation"><option value="encrypt">Encrypt</option><option value="decrypt">Decrypt</option></select></div></div><div class="form-actions"><button type="submit" class="primary" id="run-button">Run operation <span>→</span></button><button type="button" id="clear-button" class="secondary">Clear</button></div></form>
         <div class="result-heading"><h3>Response</h3><span id="response-status" class="muted">Not run</span></div><div id="result" class="result" role="status" aria-live="polite">Run this task to display actual Python results.</div>
