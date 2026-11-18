@@ -139,6 +139,19 @@ def current_actor(connection, touch=False):
     return row
 
 
+def public_token_id(connection, actor):
+    """Non-secret decimal fingerprint of the account's persisted software token.
+
+    This is an identifier for demonstrations, never an authentication credential.
+    Deriving it from the complete SHA-256 public-key fingerprint keeps existing
+    enrollments stable without a schema migration or exposing private material.
+    """
+    if not actor:
+        return None
+    row = connection.execute('SELECT public_key FROM software_tokens WHERE user_id=%s', (actor['id'],)).fetchone()
+    return str(int(hashlib.sha256(row['public_key'].encode()).hexdigest(), 16)) if row else None
+
+
 def auth_response(connection, actor):
     old = request.cookies.get(cookie_name('session'), '')
     if old:
@@ -152,7 +165,7 @@ def auth_response(connection, actor):
     if actor['role'] == 'student':
         connection.execute('INSERT INTO token_verified_sessions(token_hash) VALUES(%s)', (hashlib.sha256(token.encode()).hexdigest(),))
     csrf = secrets.token_urlsafe(32)
-    response = jsonify(actor=actor_json(actor), csrfToken=csrf, configured=True)
+    response = jsonify(actor=actor_json(actor), csrfToken=csrf, configured=True, tokenId=public_token_id(connection, actor))
     response.delete_cookie(cookie_name('pending'), path='/', secure=bool(current_app.config.get('CLOUD_DEMO')), httponly=True, samesite='Strict')
     set_cookie(response, 'session', token, SESSION_HOURS*3600)
     set_cookie(response, 'csrf', csrf, SESSION_HOURS*3600)
@@ -225,6 +238,7 @@ def session_status():
     ready = configured()
     pending_actor = None
     token_status = None
+    token_id = None
     if ready:
         try:
             with database() as connection:
@@ -241,9 +255,10 @@ def session_status():
                         row = connection.execute('SELECT status FROM software_tokens WHERE user_id=%s', (pending_actor['id'],)).fetchone()
                         token_status = row['status'] if row else 'not_enrolled'
                         actor = None
+                token_id = public_token_id(connection, actor)
         except (psycopg.Error, RuntimeError):
             return jsonify(error='The account database is unavailable. Please retry shortly.', configured=False), 503
-    response = jsonify(actor=actor_json(actor) if actor else None, csrfToken=csrf, configured=ready, pending=bool(pending_actor), pendingActor=actor_json(pending_actor) if pending_actor else None, tokenStatus=token_status)
+    response = jsonify(actor=actor_json(actor) if actor else None, csrfToken=csrf, configured=ready, pending=bool(pending_actor), pendingActor=actor_json(pending_actor) if pending_actor else None, tokenStatus=token_status, tokenId=token_id)
     set_cookie(response, 'csrf', csrf, SESSION_HOURS*3600)
     return response
 
