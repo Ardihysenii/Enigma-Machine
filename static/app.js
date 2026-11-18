@@ -61,7 +61,7 @@ $('task-form').addEventListener('submit',async event=>{
   $('run-button').disabled=true;$('response-status').textContent='Contacting Python…';
   const timer=setTimeout(()=>controller.abort(),10000);
   try{
-    const response=await fetch(`/api/tasks/${taskId}/run`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collectPayload(taskId)),signal:controller.signal});
+    const response=taskId==='authentication' ? await runPortalToken(controller.signal) : await fetch(`/api/tasks/${taskId}/run`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collectPayload(taskId)),signal:controller.signal});
     const data=await response.json();
     if(!activeTask||activeTask.id!==taskId||controller.signal.aborted)return;
     renderResult(data,taskId);
@@ -128,12 +128,14 @@ function configureTask(id){
   // Task 01 now uses the direct security panel; legacy saved analyses stay on disk.
   if(id==='packaging')fields.append(field('password','Disposable laboratory password (12–128 characters)',{type:'password'}));
   if(id==='authentication'){
-    fields.append(choice('action','Operation',[['enroll','1. Enroll disposable simulated token'],['challenge','2. Issue fresh 60-second challenge'],['authenticate','3. Authenticate / consume challenge'],['audit','View session audit records']]));
-    fields.append(field('identity','Fictional identity',{placeholder:'e.g. lab-student'}));
-    fields.append(field('pin','Disposable laboratory PIN (4–12 digits)',{type:'password'}));
+    fields.append(choice('action','Operation',[['status','Refresh accounts / live status'],['enroll','1. Enroll selected account'],['challenge','2. Issue fresh 60-second challenge'],['authenticate','3. Verify / consume challenge'],['audit','View token audit records']]));
+    fields.append(choice('token-user','Account (administrators may select active students)',[]));
+    fields.append(field('pin','Disposable PIN or passphrase (4–128 characters)',{type:'password'}));
+    const link=document.createElement('a');link.href='/college';link.textContent='Sign in or create your account in the college portal first';fields.append(link);
+    void refreshTokenAccounts();
     fields.append(choice('test','Signature check',[['normal','Normal verification'],['altered','Test altered challenge'],['wrong_key','Test wrong public key']]));
   }
-  const notes={analysis:'Complete the structured analysis and save it locally. Load restores the saved fields in this browser session.',classical:'Enter a key and choose encrypt or decrypt. ASCII letters become uppercase; punctuation and other characters are preserved.',rsa:'Run a short-message RSA-OAEP round trip with disposable keys. Maximum 190 UTF-8 bytes.',signatures:'Sign the document, then check original, altered-document and wrong-public-key outcomes.',packaging:'Use a disposable password. Download encrypted PKCS #8, PKCS #12 and a self-signed test certificate. Private keys never appear in the response.',authentication:'Software simulation only: enroll once, issue a challenge, then authenticate. Request a new challenge before every success/failure test. Five consecutive failures lock the token.'};
+  const notes={analysis:'Complete the structured analysis and save it locally. Load restores the saved fields in this browser session.',classical:'Enter a key and choose encrypt or decrypt. ASCII letters become uppercase; punctuation and other characters are preserved.',rsa:'Run a short-message RSA-OAEP round trip with disposable keys. Maximum 190 UTF-8 bytes.',signatures:'Sign the document, then check original, altered-document and wrong-public-key outcomes.',packaging:'Use a disposable password. Download encrypted PKCS #8, PKCS #12 and a self-signed test certificate. Private keys never appear in the response.',authentication:'Database-backed software simulation, not a smart card or PKCS #11. Sign in at College first. Enroll once, then request a new challenge before each verification. Five failures lock the token. Private keys use PIN-encrypted PKCS #8; short PINs remain vulnerable to offline guessing. Student login completes only after verification; administrator demos never sign in as the selected student.'};
   $('next-title').textContent='How to run this task';$('next-description').textContent=notes[id];
 }
 function collectPayload(id){
@@ -160,4 +162,32 @@ function renderResult(data,id){
     const a=document.createElement('a');a.textContent='Download '+name;a.href=url;a.className='text-link';a.download=name;
     result.append(a,document.createElement('br'));
   }
+}
+
+let tokenCsrf='', tokenChallenge=null;
+async function refreshTokenAccounts(){
+  try {
+    const session=await fetch('/api/portal/session',{credentials:'same-origin',cache:'no-store'});const meta=await session.json();tokenCsrf=meta.csrfToken||'';
+    const response=await fetch('/api/portal/token/status',{credentials:'same-origin',cache:'no-store'});const data=await response.json();
+    if(!response.ok)throw new Error(data.error);
+    const select=$('token-user');if(!select)return;const previous=select.value;select.replaceChildren();
+    data.users.forEach(user=>{const option=document.createElement('option');option.value=user.id;option.textContent=user.name+' · '+user.email+' · '+user.tokenStatus;select.append(option);});
+    if(data.users.some(user=>user.id===previous))select.value=previous;
+    select.onchange=()=>{tokenChallenge=null;};
+    return data;
+  } catch(error){if(activeTask?.id==='authentication')$('result').textContent=error.message;}
+}
+async function runPortalToken(signal){
+  const action=$('action').value, userId=$('token-user').value, pin=$('pin').value, test=$('test').value;$('pin').value='';
+  if(action==='status'){const data=await refreshTokenAccounts();return new Response(JSON.stringify(data||{error:'Sign in at College first.'}),{status:data?200:401,headers:{'Content-Type':'application/json'}});}
+  if(!tokenCsrf)await refreshTokenAccounts();
+  if(action==='audit')return fetch('/api/portal/token/audit',{signal,credentials:'same-origin',cache:'no-store'});
+  const body=action==='enroll'?{pin,userId}:action==='challenge'?{userId}:{pin,userId,test,challengeId:tokenChallenge?.userId===userId?tokenChallenge.id:''};
+  const response=await fetch('/api/portal/token/'+(action==='authenticate'?'verify':action),{method:'POST',signal,credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':tokenCsrf},body:JSON.stringify(body)});
+  const data=await response.clone().json();
+  if(action==='challenge'&&response.ok)tokenChallenge={id:data.challengeId,userId};
+  if(action==='authenticate')tokenChallenge=null;
+  if(action==='enroll'&&response.ok)void refreshTokenAccounts();
+  if(data.actor){tokenCsrf=data.csrfToken;data.message='Token verified. Your own college session is ready.';return new Response(JSON.stringify(data),{status:response.status,headers:{'Content-Type':'application/json'}});}
+  return response;
 }
