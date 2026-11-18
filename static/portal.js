@@ -8,7 +8,18 @@
   function message(element, value, error = false) { text(element, value); element.classList.toggle('is-error', error); element.classList.toggle('is-success', !error && Boolean(value)); }
   function notice(value, error = false) { message($('global-message'), value, error); $('global-message').hidden = !value; }
   function showTop(view) { ['loading', 'setup', 'auth', 'dashboard'].forEach((name) => { $(`${name}-view`).hidden = name !== view; }); }
+  // Public software-token identifier only. Never persist PINs, keys or session cookies.
+  function syncDemoToken(data) {
+    try {
+      if (data?.actor && typeof data.tokenId === 'string' && /^[0-9]{1,78}$/.test(data.tokenId)) {
+        localStorage.setItem('enigma_token_id', data.tokenId);
+      } else {
+        localStorage.removeItem('enigma_token_id');
+      }
+    } catch (_) { /* Storage may be blocked; authentication must still work. */ }
+  }
   function clearPrivateData() {
+    syncDemoToken(null);
     text($('workspace-identity'), 'ACADEMIC WORKSPACE');
     $('teacher-directory').hidden = true; $('teacher-directory-body').replaceChildren(); text($('teacher-directory-state'), ''); $('teacher-student-search').value = ''; $('teacher-management').hidden = true; delete $('teacher-management').dataset.ready; $('teacher-tools').hidden = true; $('teacher-workspace-note').hidden = true;
     ['teacher-enrollment-course', 'teacher-student-id', 'teacher-unassigned-course'].forEach(id => $(id).replaceChildren());
@@ -85,7 +96,7 @@
           if (data.pending) { form.reset(); message(form.querySelector('.form-message'), ''); state.csrf=data.csrfToken; showPendingToken(data); return; }
           $('token-step').hidden=true;
           if (!data.actor || !data.csrfToken) throw new ApiError('The server returned an incomplete session. Please try again.', 502);
-          clearPrivateData(); state.actor = data.actor; state.csrf = data.csrfToken; form.reset();
+          clearPrivateData(); state.actor = data.actor; state.csrf = data.csrfToken; syncDemoToken(data); form.reset();
           message(form.querySelector('.form-message'), ''); notice(''); await enterDashboard();
         } catch (error) {
           message(form.querySelector('.form-message'), name === 'signin' && [400, 401, 403].includes(error.status) ? 'Sign-in failed. Check your email and password, then try again.' : error.message, true);
@@ -126,7 +137,7 @@
         const challenge=await api('/token/challenge',{});
         const data=await api('/token/verify',{pin,challengeId:challenge.challengeId,test:'normal'});
         if(!data.actor||!data.csrfToken)throw new Error('Verification did not establish a session. Sign in again.');
-        clearPrivateData();state.actor=data.actor;state.csrf=data.csrfToken;$('token-step').hidden=true;message(form.querySelector('.form-message'),'');await enterDashboard();
+        clearPrivateData();state.actor=data.actor;state.csrf=data.csrfToken;syncDemoToken(data);$('token-step').hidden=true;message(form.querySelector('.form-message'),'');await enterDashboard();
       }catch(error){message(form.querySelector('.form-message'),error.message,true);}
     });
   });
@@ -143,7 +154,7 @@
     text($('setup-view').querySelector('p'), 'Account access needs a configured database. Sign-in and account creation will be available once the server setup is complete.');
     try {
       const data = await api('/session');
-      clearPrivateData(); state.csrf = data.csrfToken || ''; state.configured = data.configured === true;
+      clearPrivateData(); syncDemoToken(data); state.csrf = data.csrfToken || ''; state.configured = data.configured === true;
       if (!state.configured) { showTop('setup'); return; }
       if (!state.csrf) throw new Error('A secure session could not be started. Please try again.');
       await refreshPolicy(false);
