@@ -118,6 +118,13 @@ def execute(task_id):
     if not isinstance(message, str) or len(message) > 2000:
         return jsonify(error='Message must be text, at most 2,000 characters.'), 400
     try:
+        if task_id == 'signatures':
+            from services import text
+            text(payload, 'message')
+            from teacher_signatures import authorize_legacy
+            denial = authorize_legacy()
+            if denial is not None:
+                return denial
         with LOCK:
             result = run_task(task_id, payload, lab_state())
             if task_id == 'authentication':
