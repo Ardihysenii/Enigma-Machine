@@ -119,7 +119,10 @@ def execute(task_id):
         return jsonify(error='Message must be text, at most 2,000 characters.'), 400
     try:
         with LOCK:
-            return jsonify(run_task(task_id, payload, lab_state()))
+            result = run_task(task_id, payload, lab_state())
+            if task_id == 'authentication':
+                result.update(legacySimulation=True, portalAuthentication=False, deprecated='Use /api/portal/token/* for database identities. This isolated legacy simulation never reads or changes portal accounts or sessions.')
+            return jsonify(result)
     except ValueError as exc:
         return jsonify(status='invalid_input', error=str(exc)), 400
     except OSError:
