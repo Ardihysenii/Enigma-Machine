@@ -118,7 +118,7 @@ class FunctionTests(unittest.TestCase):
 
     def test_signature_real_verification_and_negative_cases(self):
         private = services.keypair()
-        with patch('services.keypair', side_effect=[private, services.keypair()]):
+        with patch('services.keypair', side_effect=[private, services.keypair()]), patch('teacher_signatures.authorize_legacy', return_value=None):
             data = self.run_task('signatures', {'message': 'Document café'})
         signature = base64.b64decode(data['signature_base64'], validate=True)
         private.public_key().verify(signature, 'Document café'.encode(), services.pss(), hashes.SHA256())
