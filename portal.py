@@ -593,3 +593,6 @@ def teaching_enrollment(connection, actor):
 
 from token_auth import register as register_token_routes
 register_token_routes(portal)
+
+from teacher_signatures import register as register_teacher_signatures
+register_teacher_signatures(portal)
