@@ -79,7 +79,7 @@
         message(form.querySelector('.form-message'), name === 'signin' ? 'Signing in…' : 'Creating your account…');
         try {
           const data = await api(`/${name}`, values);
-          if (data.pending) { form.reset(); state.csrf=data.csrfToken; showPendingToken(data); return; }
+          if (data.pending) { form.reset(); message(form.querySelector('.form-message'), ''); state.csrf=data.csrfToken; showPendingToken(data); return; }
           $('token-step').hidden=true;
           if (!data.actor || !data.csrfToken) throw new ApiError('The server returned an incomplete session. Please try again.', 502);
           clearPrivateData(); state.actor = data.actor; state.csrf = data.csrfToken; form.reset();
