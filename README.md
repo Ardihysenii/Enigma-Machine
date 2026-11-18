@@ -18,7 +18,7 @@ Run `python -m unittest discover -s tests -v`; set `ENIGMA_TEST_DATABASE_URL` fo
 
 On Windows, use **Start ENIGMA.cmd**, or create a virtual environment, install `requirements.txt` and run `python app.py`. Local service is loopback-only with debug disabled. Stop and restart an older server after code changes. **Start ENIGMA College.cmd** offers the same app on port 5002.
 
-Task 06 remains a separate disposable software smart-card simulation. Email verification and password recovery are not implemented. Crypto-lab files and keys keep the temporary/local-storage limitations described below. All six controls being active is a demonstration state, not a security certification.
+Task 06 is now connected to PostgreSQL accounts and the existing student sign-in flow. See [TOKEN_AUTH.md](TOKEN_AUTH.md) for setup, verification, and simulation boundaries. Email verification and password recovery are not implemented. Crypto-lab files and keys keep the temporary/local-storage limitations described below. All six controls being active is a demonstration state, not a security certification.
 
 ## Operations
 
@@ -44,16 +44,15 @@ Python reloads both protected formats with the supplied password, checks key/cer
 
 The certificate is laboratory-only, not a trusted CA-issued identity. PKCS #1, #8, #11 and #12 distinctions appear in the result. PKCS #11 hardware integration is not implemented.
 
-### 6. Simulated token authentication
-1. Choose **Enroll**, enter a fictional identity and a disposable 4–12 digit PIN, and run. One simulated token may be enrolled per active session.
-2. Choose **Issue fresh challenge** and run. Challenges expire after 60 seconds.
-3. Choose **Authenticate**, enter the same fictional identity and PIN, and run. PIN fields clear on every submission, so re-enter when needed.
-4. To test failures, request a new challenge, then use a wrong identity/PIN or select the altered-challenge/wrong-public-key test.
-5. Choose **View session audit records** to inspect recorded outcomes.
+### 6. Database-backed software token authentication
 
-Each challenge is consumed on every authentication attempt, preventing replay. Five consecutive failed identity/PIN or signature checks lock the simulated token. Restart resets enrollment/lockout because the private key and PIN hash exist only in server memory. Inactive in-memory sessions expire after one hour. Audit records contain timestamps, event types and results, not PINs or private keys; only the latest 100 are retained per session and saved locally.
+Use the existing Task 06 sector at /#authentication. Sign up/sign in at /college first. Students receive a five-minute pending login, not a campus session, until their token verifies. First-time enrollment is available for the password-verified account; administrators may enroll a selected active student. Staff sign-in remains unchanged.
 
-This is a software simulation: no secure element, real smart card, hardware PIN boundary, trusted identity provider, tamper-proof audit storage or production authorization system is provided.
+The sector loads authorized accounts and current status from the database. Enroll once with a disposable PIN/passphrase, issue a fresh 60-second challenge, then verify it. Altered-challenge and wrong-key tests are actual failed RSA-PSS checks. Every verification attempt consumes its challenge; five consecutive failures lock the token. Administrator demonstrations never create a session as the selected student.
+
+Keys are PIN/passphrase-encrypted PKCS #8; PIN hashes, public keys, pending tickets, challenges, and verified-session provenance persist in PostgreSQL. Token schema version 3 is applied additively with the existing backend connection if its database role has CREATE permission in the portal schema. No new connection string or public migration endpoint is needed. Existing accounts and grades are preserved; old password-only student sessions cannot authorize campus access. The explicit setup script remains available for restricted database roles.
+
+This is server-side software simulation, not hardware possession or PKCS #11. Prefer a long disposable passphrase: short PINs remain vulnerable to offline guessing if the database is compromised. Locked-token recovery requires the database operator; enrollment cannot overwrite a token. See [TOKEN_AUTH.md](TOKEN_AUTH.md).
 
 ## Safety and storage
 
@@ -99,10 +98,7 @@ starts/instance changes invalidate browser sessions. Even with a stable secret,
 state is still **temporary and instance-local**, not shared durable storage.
 
 This deployment is a disposable learning demo, NOT a real college portal. All
-identities are freely selectable. Grades, policy, audits, token enrollment,
-challenges and download registrations may reset or differ across instances.
-A token challenge may be lost between requests; re-enroll/retry or use the local
-application for a consistent full presentation. Downloads may become unavailable.
+identities are freely selectable. College accounts, grades, policy, token enrollment and token challenges use PostgreSQL and persist across instances. Legacy standalone crypto-lab state and download registrations remain temporary per instance. Downloads may become unavailable.
 Do not enter real data or credentials. Durable cross-instance behavior requires
 an external state store and a deliberate security design; `/tmp` does not supply it.
 
