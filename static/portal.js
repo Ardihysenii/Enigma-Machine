@@ -20,6 +20,7 @@
   }
   function clearPrivateData() {
     syncDemoToken(null);
+    $('teacher-signature-link').hidden = true;
     text($('workspace-identity'), 'ACADEMIC WORKSPACE');
     $('teacher-directory').hidden = true; $('teacher-directory-body').replaceChildren(); text($('teacher-directory-state'), ''); $('teacher-student-search').value = ''; $('teacher-management').hidden = true; delete $('teacher-management').dataset.ready; $('teacher-tools').hidden = true; $('teacher-workspace-note').hidden = true;
     ['teacher-enrollment-course', 'teacher-student-id', 'teacher-unassigned-course'].forEach(id => $(id).replaceChildren());
@@ -167,6 +168,7 @@
     }
   }
   function applyActor(actor) {
+    $('teacher-signature-link').hidden = actor.role !== 'professor';
     text($('actor-name'), actor.name); text($('actor-email'), actor.email); text($('actor-role'), roles[actor.role] || actor.role);
   }
   async function enterDashboard() {
