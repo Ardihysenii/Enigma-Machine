@@ -33,14 +33,27 @@ assert c.get('/api/health', base_url='https://evil.example', environ_overrides=r
 for task, payload in [
     ('classical', {'message':'HELLO','key':'3'}),
     ('rsa', {'message':'HELLO WORLD'}),
-    ('signatures', {'message':'Fictional document'}),
 ]:
     r=c.post('/api/tasks/'+task+'/run', json=payload, base_url=base,
              headers={'Origin':base}, environ_overrides=remote)
     assert r.status_code == 200, r.data
     d=r.get_json()
     if task=='rsa': assert d['recovery_matches'] and d['wrong_key_rejected']
-    if task=='signatures': assert d['original_verified'] and not d['altered_document_verified'] and not d['wrong_key_verified']
+# Signing now requires a teacher session, including the legacy round-trip route.
+from unittest.mock import patch, MagicMock
+with patch('portal.database') as database, patch('portal.current_actor', return_value=None):
+    database.return_value.__enter__.return_value=MagicMock()
+    r=c.post('/api/tasks/signatures/run',json={'message':'Fictional document'},base_url=base,headers={'Origin':base},environ_overrides=remote)
+    assert r.status_code==401, r.data
+teacher=dict(id='teacher-test',name='Fictional Teacher',email='teacher@test.invalid',role='professor')
+csrf='a'*43
+c.set_cookie('__Host-enigma_portal_csrf',csrf,domain='enigma-test.vercel.app',secure=True)
+with patch('portal.database') as database, patch('portal.current_actor', return_value=teacher), patch('portal.audit'):
+    database.return_value.__enter__.return_value=MagicMock()
+    r=c.post('/api/tasks/signatures/run',json={'message':'Fictional document'},base_url=base,headers={'Origin':base,'X-CSRF-Token':csrf},environ_overrides=remote)
+    assert r.status_code==200, r.data
+    d=r.get_json()
+    assert d['original_verified'] and not d['altered_document_verified'] and not d['wrong_key_verified']
 assert c.post('/api/tasks/classical/run', json={'key':'3'}, base_url=base,
               headers={'Origin':'https://evil.example'}, environ_overrides=remote).status_code==403
 r=c.post('/api/college/login', json={'user_id':'s001'}, base_url=base,
