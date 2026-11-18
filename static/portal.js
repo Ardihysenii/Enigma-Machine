@@ -42,7 +42,7 @@
       }
       if (!response.ok) {
         if (response.status === 401 && state.actor && !['/signin', '/signup'].includes(path)) {
-          clearPrivateData(); showTop('auth'); notice('Your session has ended. Sign in again to continue.', true);
+          clearPrivateData(); authTab('signin'); showTop('auth'); notice('Your session has ended. Sign in again to continue.', true);
         }
         throw new ApiError(typeof data.error === 'string' ? data.error : 'This request couldn’t be completed.', response.status);
       }
@@ -53,6 +53,9 @@
     } finally { clearTimeout(timeout); }
   }
   function authTab(name, focus = false) {
+    document.querySelector('.auth-tabs').hidden = false;
+    $('token-step').hidden = true;
+    $('login-pin').value = '';
     ['signin', 'signup'].forEach((value) => {
       const active = name === value;
       $(`${value}-panel`).hidden = !active;
@@ -93,11 +96,27 @@
   let pendingTokenStatus=null;
   function showPendingToken(data) {
     clearPrivateData(); state.csrf=data.csrfToken || state.csrf; pendingTokenStatus=data.tokenStatus;
-    showTop('auth'); $('token-step').hidden=false;
-    $('token-step-description').textContent=(data.pendingActor?.name || 'Your account')+': '+(data.tokenStatus==='not_enrolled'?'Choose a new token PIN/passphrase. Enrollment and verification are required before entering campus.':'Enter your token PIN/passphrase. Password alone does not open campus.');
-    $('token-login-submit').textContent=data.tokenStatus==='not_enrolled'?'Enroll and verify token':'Verify token';
-    $('token-step').scrollIntoView({block:'center'}); $('login-pin').focus();
+    const enrolling=data.tokenStatus==='not_enrolled';
+    const locked=['locked','revoked'].includes(data.tokenStatus);
+    notice(''); showTop('auth');
+    document.querySelector('.auth-tabs').hidden=true;
+    $('signin-panel').hidden=true; $('signup-panel').hidden=true;
+    $('token-step').hidden=false;
+    ['signin-form','signup-form','token-login-form'].forEach(id=>message($(id).querySelector('.form-message'),''));
+    $('login-pin').value='';
+    $('token-step-title').textContent=locked?'Your token needs attention':enrolling?'Set up your security token':'Verify your security token';
+    $('token-account').textContent=[data.pendingActor?.name,data.pendingActor?.email].filter(Boolean).join(' · ');
+    $('token-step-description').textContent=locked?'This token is locked or revoked. Ask the project administrator for recovery; creating another token cannot replace it.':enrolling?'Your account is created. Choose a separate PIN or passphrase to protect your software token. Remember it—you will need it after your password on future sign-ins.':'Your password is confirmed. Enter the PIN or passphrase you chose when your token was enrolled. It is separate from your account password.';
+    $('token-how-it-works').textContent=enrolling?'We create an encrypted software key linked to your student account, then verify a fresh signed challenge before opening the portal.':'Your PIN unlocks your software key to sign a fresh, one-use challenge. The portal opens only after the signature is verified.';
+    $('token-login-submit').textContent=enrolling?'Create token & continue':'Verify & enter campus';
+    $('token-login-form').hidden=locked;
+    $('token-step').scrollIntoView({block:'center'});
+    if(!locked)$('login-pin').focus();else $('token-step-title').focus();
   }
+  $('token-back').addEventListener('click',()=>{
+    pendingTokenStatus=null; $('token-login-form').reset(); notice(''); authTab('signin');
+    $('signin-email').focus();
+  });
   $('token-login-form').addEventListener('submit', async event=>{
     event.preventDefault();const form=event.currentTarget;if(form.dataset.busy||!form.reportValidity())return;
     const pin=$('login-pin').value;$('login-pin').value='';
@@ -129,7 +148,7 @@
       if (!state.csrf) throw new Error('A secure session could not be started. Please try again.');
       await refreshPolicy(false);
       if (data.pending) { showPendingToken(data); return; }
-      if (data.actor) { $('token-step').hidden=true; state.actor = data.actor; await enterDashboard(); } else { showTop('auth'); }
+      if (data.actor) { $('token-step').hidden=true; state.actor = data.actor; await enterDashboard(); } else { authTab('signin'); showTop('auth'); }
     } catch (error) {
       clearPrivateData(); showTop('setup'); notice(error.message, true);
       text($('setup-view').querySelector('h1'), 'We couldn’t connect to campus.');
@@ -451,7 +470,7 @@
       if (withDashboard && state.actor && isEditing()) {
         const session = await api('/session');
         if (!session.actor || session.actor.role !== state.actor.role || String(session.actor.id) !== String(state.actor.id)) {
-          clearPrivateData(); state.csrf = session.csrfToken || state.csrf; showTop('auth');
+          clearPrivateData(); state.csrf = session.csrfToken || state.csrf; authTab('signin'); showTop('auth');
           notice('Your session or account permissions changed. Sign in again to continue.', true); return;
         }
         if (session.csrfToken) state.csrf = session.csrfToken;
