@@ -25,6 +25,23 @@ def configured():
     return bool(current_app.config.get('PORTAL_DATABASE_URL') or os.environ.get('ENIGMA_DATABASE_URL') or os.environ.get('DATABASE_URL'))
 
 
+
+def ensure_token_schema(connection):
+    """Lazy additive setup using the existing DB connection and validated search_path.
+
+    No public DDL endpoint, no base-table alterations/deletions, no process cache:
+    the version marker and DDL commit/rollback together with this transaction.
+    A cross-worker advisory lock plus a second marker check serializes cold starts.
+    """
+    if connection.execute('SELECT version FROM schema_versions WHERE version=3').fetchone():
+        return
+    connection.execute('SELECT pg_catalog.pg_advisory_xact_lock(74420306)')
+    if connection.execute('SELECT version FROM schema_versions WHERE version=3').fetchone():
+        return
+    connection.execute("CREATE TABLE IF NOT EXISTS software_tokens (\n  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,\n  public_key text NOT NULL,\n  private_key_encrypted text NOT NULL CHECK (private_key_encrypted LIKE '-----BEGIN ENCRYPTED PRIVATE KEY-----%'),\n  pin_hash text NOT NULL,\n  status varchar(16) NOT NULL DEFAULT 'active' CHECK (status IN ('active','locked','revoked')),\n  failures integer NOT NULL DEFAULT 0 CHECK (failures >= 0),\n  created_at timestamptz NOT NULL DEFAULT now()\n);\nCREATE TABLE IF NOT EXISTS token_pending (\n  ticket_hash char(64) PRIMARY KEY,\n  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n  expires_at timestamptz NOT NULL\n);\nCREATE INDEX IF NOT EXISTS token_pending_user ON token_pending(user_id);\nCREATE TABLE IF NOT EXISTS token_challenges (\n  id uuid PRIMARY KEY,\n  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n  context_hash char(64) NOT NULL,\n  nonce varchar(64) NOT NULL,\n  expires_at timestamptz NOT NULL\n);\nCREATE INDEX IF NOT EXISTS token_challenge_context ON token_challenges(user_id,context_hash);\n-- Verified session provenance avoids changing/deleting any pre-existing sessions.\nCREATE TABLE IF NOT EXISTS token_verified_sessions (\n  token_hash char(64) PRIMARY KEY REFERENCES sessions(token_hash) ON DELETE CASCADE\n);\n", prepare=False)
+    connection.execute('INSERT INTO schema_versions(version) VALUES(3) ON CONFLICT DO NOTHING')
+
+
 @contextmanager
 def database():
     dsn = current_app.config.get('PORTAL_DATABASE_URL') or os.environ.get('ENIGMA_DATABASE_URL') or os.environ.get('DATABASE_URL')
@@ -36,6 +53,7 @@ def database():
     with psycopg.connect(dsn, connect_timeout=10, row_factory=dict_row) as connection:
         connection.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(schema)))
         connection.execute("SET LOCAL statement_timeout = '8s'")
+        ensure_token_schema(connection)
         yield connection
 
 
@@ -112,6 +130,7 @@ def current_actor(connection, touch=False):
         (digest, idle_enabled, IDLE_SECONDS))
     row = connection.execute('''SELECT u.id,u.name,u.email,u.role FROM sessions s JOIN users u ON u.id=s.user_id
         WHERE s.token_hash=%s AND u.active AND s.expires_at>now()
+        AND (u.role<>'student' OR EXISTS(SELECT 1 FROM token_verified_sessions v WHERE v.token_hash=s.token_hash))
         AND (NOT %s OR s.last_seen>now()-(%s * interval '1 second')) ''',
         (digest, idle_enabled, IDLE_SECONDS)).fetchone()
     if row and touch:
@@ -130,8 +149,11 @@ def auth_response(connection, actor):
     token = secrets.token_urlsafe(48)
     connection.execute('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(%s,%s,%s)',
                        (hashlib.sha256(token.encode()).hexdigest(), actor['id'], datetime.now(timezone.utc)+timedelta(hours=SESSION_HOURS)))
+    if actor['role'] == 'student':
+        connection.execute('INSERT INTO token_verified_sessions(token_hash) VALUES(%s)', (hashlib.sha256(token.encode()).hexdigest(),))
     csrf = secrets.token_urlsafe(32)
     response = jsonify(actor=actor_json(actor), csrfToken=csrf, configured=True)
+    response.delete_cookie(cookie_name('pending'), path='/', secure=bool(current_app.config.get('CLOUD_DEMO')), httponly=True, samesite='Strict')
     set_cookie(response, 'session', token, SESSION_HOURS*3600)
     set_cookie(response, 'csrf', csrf, SESSION_HOURS*3600)
     return response
@@ -201,16 +223,27 @@ def session_status():
     csrf = csrf_token()
     actor = None
     ready = configured()
+    pending_actor = None
+    token_status = None
     if ready:
         try:
             with database() as connection:
                 actor = current_actor(connection)
                 # Detect a missing policy migration even for a fresh visitor.
                 policy(connection)
-                connection.execute('SELECT version FROM schema_versions WHERE version=1').fetchone()
+                if not connection.execute('SELECT version FROM schema_versions WHERE version=3').fetchone():
+                    raise RuntimeError('token_migration_required')
+                raw_pending = request.cookies.get(cookie_name('pending'), '')
+                if re.fullmatch(r'[A-Za-z0-9_-]{64}', raw_pending):
+                    pending_actor = connection.execute('''SELECT u.id,u.name,u.email,u.role FROM token_pending t JOIN users u ON u.id=t.user_id
+                        WHERE t.ticket_hash=%s AND t.expires_at>now() AND u.active AND u.role='student' ''', (hashlib.sha256(raw_pending.encode()).hexdigest(),)).fetchone()
+                    if pending_actor:
+                        row = connection.execute('SELECT status FROM software_tokens WHERE user_id=%s', (pending_actor['id'],)).fetchone()
+                        token_status = row['status'] if row else 'not_enrolled'
+                        actor = None
         except (psycopg.Error, RuntimeError):
             return jsonify(error='The account database is unavailable. Please retry shortly.', configured=False), 503
-    response = jsonify(actor=actor_json(actor) if actor else None, csrfToken=csrf, configured=ready)
+    response = jsonify(actor=actor_json(actor) if actor else None, csrfToken=csrf, configured=ready, pending=bool(pending_actor), pendingActor=actor_json(pending_actor) if pending_actor else None, tokenStatus=token_status)
     set_cookie(response, 'csrf', csrf, SESSION_HOURS*3600)
     return response
 
@@ -277,6 +310,9 @@ def signup():
                 audit(connection, None, 'signup_rejected', False)
                 return jsonify(error='Unable to create that account. Try signing in or use another address.'), 409
             audit(connection, actor, 'account_created', True, role)
+            if actor['role'] == 'student':
+                from token_auth import pending_response
+                return pending_response(connection, actor)
             return auth_response(connection, actor)
     except ValueError as error:
         return jsonify(error=str(error)), 400
@@ -304,6 +340,10 @@ def signin():
                 audit(connection, None, 'signin_failed', False)
                 return jsonify(error='Email or password is incorrect.'), 401
             connection.execute('UPDATE login_limits SET failures=0,locked_until=NULL,window_started=now() WHERE key_hash=%s', (limit_key('email', email),))
+            if actor['role'] == 'student':
+                audit(connection, actor, 'token_password_verified', True)
+                from token_auth import pending_response
+                return pending_response(connection, actor)
             audit(connection, actor, 'signed_in', True)
             return auth_response(connection, actor)
     except ValueError as error:
@@ -425,6 +465,9 @@ def set_role(connection, actor):
         # Retain historical enrollment/grades; visibility and edit checks use current role.
         pass
     connection.execute('DELETE FROM sessions WHERE user_id=%s',(identifier,)) if role!=target['role'] else None
+    if role != target['role']:
+        connection.execute('DELETE FROM token_pending WHERE user_id=%s', (identifier,))
+        connection.execute('DELETE FROM token_challenges WHERE user_id=%s', (identifier,))
     audit(connection,actor,'role_assigned',True,identifier+'/'+role)
     return jsonify(status='ok')
 
@@ -531,3 +574,7 @@ def teaching_enrollment(connection, actor):
     connection.execute('INSERT INTO enrollments(student_id,course_id) VALUES(%s,%s) ON CONFLICT DO NOTHING', (student['id'], course))
     audit(connection, actor, 'student_enrolled', True, str(student['id'])+'/'+course)
     return jsonify(status='ok')
+
+
+from token_auth import register as register_token_routes
+register_token_routes(portal)
