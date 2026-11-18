@@ -596,3 +596,6 @@ register_token_routes(portal)
 
 from teacher_signatures import register as register_teacher_signatures
 register_teacher_signatures(portal)
+
+from course_notices import register as register_course_notices
+register_course_notices(portal)
