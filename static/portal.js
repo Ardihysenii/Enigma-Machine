@@ -79,6 +79,8 @@
         message(form.querySelector('.form-message'), name === 'signin' ? 'Signing in…' : 'Creating your account…');
         try {
           const data = await api(`/${name}`, values);
+          if (data.pending) { form.reset(); state.csrf=data.csrfToken; showPendingToken(data); return; }
+          $('token-step').hidden=true;
           if (!data.actor || !data.csrfToken) throw new ApiError('The server returned an incomplete session. Please try again.', 502);
           clearPrivateData(); state.actor = data.actor; state.csrf = data.csrfToken; form.reset();
           message(form.querySelector('.form-message'), ''); notice(''); await enterDashboard();
@@ -86,6 +88,27 @@
           message(form.querySelector('.form-message'), name === 'signin' && [400, 401, 403].includes(error.status) ? 'Sign-in failed. Check your email and password, then try again.' : error.message, true);
         }
       });
+    });
+  });
+  let pendingTokenStatus=null;
+  function showPendingToken(data) {
+    clearPrivateData(); state.csrf=data.csrfToken || state.csrf; pendingTokenStatus=data.tokenStatus;
+    showTop('auth'); $('token-step').hidden=false;
+    $('token-step-description').textContent=(data.pendingActor?.name || 'Your account')+': '+(data.tokenStatus==='not_enrolled'?'Choose a new token PIN/passphrase. Enrollment and verification are required before entering campus.':'Enter your token PIN/passphrase. Password alone does not open campus.');
+    $('token-login-submit').textContent=data.tokenStatus==='not_enrolled'?'Enroll and verify token':'Verify token';
+    $('token-step').scrollIntoView({block:'center'}); $('login-pin').focus();
+  }
+  $('token-login-form').addEventListener('submit', async event=>{
+    event.preventDefault();const form=event.currentTarget;if(form.dataset.busy||!form.reportValidity())return;
+    const pin=$('login-pin').value;$('login-pin').value='';
+    await busyForm(form,async()=>{
+      try {
+        if(pendingTokenStatus==='not_enrolled'){await api('/token/enroll',{pin});pendingTokenStatus='active';$('token-login-submit').textContent='Verify token';}
+        const challenge=await api('/token/challenge',{});
+        const data=await api('/token/verify',{pin,challengeId:challenge.challengeId,test:'normal'});
+        if(!data.actor||!data.csrfToken)throw new Error('Verification did not establish a session. Sign in again.');
+        clearPrivateData();state.actor=data.actor;state.csrf=data.csrfToken;$('token-step').hidden=true;message(form.querySelector('.form-message'),'');await enterDashboard();
+      }catch(error){message(form.querySelector('.form-message'),error.message,true);}
     });
   });
   async function busyForm(form, action) {
@@ -105,7 +128,8 @@
       if (!state.configured) { showTop('setup'); return; }
       if (!state.csrf) throw new Error('A secure session could not be started. Please try again.');
       await refreshPolicy(false);
-      if (data.actor) { state.actor = data.actor; await enterDashboard(); } else { showTop('auth'); }
+      if (data.pending) { showPendingToken(data); return; }
+      if (data.actor) { $('token-step').hidden=true; state.actor = data.actor; await enterDashboard(); } else { showTop('auth'); }
     } catch (error) {
       clearPrivateData(); showTop('setup'); notice(error.message, true);
       text($('setup-view').querySelector('h1'), 'We couldn’t connect to campus.');
