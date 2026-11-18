@@ -20,6 +20,7 @@
   }
   function clearPrivateData() {
     syncDemoToken(null);
+    document.dispatchEvent(new CustomEvent('enigma:portal', {detail:{actor:null}}));
     $('teacher-signature-link').hidden = true;
     text($('workspace-identity'), 'ACADEMIC WORKSPACE');
     $('teacher-directory').hidden = true; $('teacher-directory-body').replaceChildren(); text($('teacher-directory-state'), ''); $('teacher-student-search').value = ''; $('teacher-management').hidden = true; delete $('teacher-management').dataset.ready; $('teacher-tools').hidden = true; $('teacher-workspace-note').hidden = true;
@@ -168,27 +169,32 @@
     }
   }
   function applyActor(actor) {
+    document.querySelectorAll('[data-view="notices"]').forEach(el => { el.hidden = !['student','professor'].includes(actor.role); });
+    document.dispatchEvent(new CustomEvent('enigma:portal', {detail:{actor}}));
     $('teacher-signature-link').hidden = actor.role !== 'professor';
     text($('actor-name'), actor.name); text($('actor-email'), actor.email); text($('actor-role'), roles[actor.role] || actor.role);
   }
   async function enterDashboard() {
-    state.view = state.actor.role === 'professor' ? 'students' : 'overview'; state.dirty = false; applyActor(state.actor); showTop('dashboard');
+    state.view = location.hash === '#notices' && ['professor','student'].includes(state.actor.role) ? 'notices' : state.actor.role === 'professor' ? 'students' : 'overview'; state.dirty = false; applyActor(state.actor); showTop('dashboard');
     document.querySelectorAll('[data-view]').forEach((button) => { button.hidden = button.dataset.view === 'administration'; });
     switchView(state.view, false); await refreshPolicy(false); await loadDashboard();
   }
   function permitted(view) {
     const caps = state.dashboard && state.dashboard.capabilities;
-    return (view === 'students' && state.actor?.role === 'professor') || ['overview', 'records', 'courses', 'professor', 'audit'].includes(view) || Boolean(caps && view === 'administration' && caps.administer);
+    return (view === 'notices' && ['student','professor'].includes(state.actor?.role)) || (view === 'students' && state.actor?.role === 'professor') || ['overview', 'records', 'courses', 'professor', 'audit'].includes(view) || Boolean(caps && view === 'administration' && caps.administer);
   }
   function switchView(view, load = true) {
     if (!permitted(view)) return;
     state.view = view;
-    ['students', 'overview', 'records', 'courses', 'professor', 'administration', 'audit'].forEach((name) => { $(`${name}-view`).hidden = name !== view; });
+    ['students', 'overview', 'records', 'courses', 'professor', 'administration', 'audit', 'notices'].forEach((name) => { $(`${name}-view`).hidden = name !== view; });
     document.querySelectorAll('[data-view]').forEach((button) => { if (button.dataset.view === view) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current'); });
     if (load && view === 'administration') loadAdministration();
     if (load && view === 'audit') loadAudit();
+    document.querySelectorAll('[data-view="notices"]').forEach(el => { el.hidden = !['student','professor'].includes(state.actor?.role); });
+    document.dispatchEvent(new CustomEvent('enigma:portal', {detail:{actor:state.actor,view}}));
   }
   document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));
+  window.addEventListener('hashchange', () => { if (location.hash === '#notices' && state.actor) switchView('notices'); });
   function startLoad(name) { const id = (state.loads[name] || 0) + 1; state.loads[name] = id; const epoch = state.epoch; return () => state.epoch === epoch && state.loads[name] === id && Boolean(state.actor); }
   async function loadDashboard(background = false, force = false) {
     if (!state.actor || (background && isEditing() && !force)) return;
