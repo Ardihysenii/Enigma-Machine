@@ -1,0 +1,19 @@
+/* RSA-only teaching workspace. Other task layouts are unchanged. */
+body[data-task="rsa"] .workspace-grid, body[data-task="rsa"] .next-step { display:none; }
+#rsa-demo .rsa-intro { margin-bottom:20px; }
+#rsa-demo .rsa-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:20px 0 12px; }
+#rsa-demo .rsa-journey { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
+#rsa-demo .rsa-journey .panel { min-width:0; }
+#rsa-demo h2 { font-size:1.35rem; }
+#rsa-demo p { line-height:1.65; }
+#rsa-demo textarea { width:100%; box-sizing:border-box; resize:vertical; }
+#rsa-demo button { margin-top:8px; white-space:normal; }
+#rsa-demo button:disabled { opacity:.5; cursor:not-allowed; }
+#rsa-demo pre { white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; max-height:360px; overflow:auto; font-size:.85rem; }
+#rsa-demo .rsa-key-label { color:#e5d1a8; font-size:.85rem; margin-top:22px; }
+#rsa-demo .rsa-recovered { padding:18px; border:1px solid #626052; border-radius:6px; min-height:100px; background:#191d1e; }
+#rsa-demo .rsa-boundary { color:#b9bdbb; font-size:.88rem; margin:20px 0; }
+#rsa-demo summary { cursor:pointer; padding:8px 0; color:#e5d1a8; }
+#rsa-demo .rsa-error { color:#ffb6a8; }
+#rsa-demo .rsa-success { color:#b8dfb5; }
+@media(max-width:1100px){#rsa-demo .rsa-journey { grid-template-columns:1fr; }}
