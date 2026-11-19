@@ -1,4 +1,4 @@
-/* Disposable RSA teaching keys only; no account/token integration or persistent storage. */
+/* Disposable RSA teaching keys. Only public-key demo metadata persists; private keys stay non-extractable. */
 (() => {
   'use strict';
   const el = id => document.getElementById('rsa-' + id);
@@ -6,6 +6,31 @@
   if (!section) return;
   const algorithm = {name:'RSA-OAEP', modulusLength:2048, publicExponent:new Uint8Array([1,0,1]), hash:'SHA-256'};
   const encoder = new TextEncoder();
+  const STORAGE = 'enigma.rsa.bob-public-key.v1';
+  function storageStatus(text) { el('storage-status').textContent = text; }
+  function persistPublicKey(pem) {
+    try {
+      localStorage.setItem(STORAGE, JSON.stringify({version:1, owner:'Bob (disposable demo)',
+        algorithm:'RSA-OAEP', modulusLength:2048, hash:'SHA-256', format:'SPKI / PEM',
+        publicKeyPem:pem, createdAt:new Date().toISOString(),
+        note:'Public key only. No private key, message or account credential is stored.'}));
+      storageStatus('Bob’s public key is saved in Local Storage as ' + STORAGE + '. Private key not saved.');
+    } catch {
+      // Never leave a stale public key labelled as the newly generated one.
+      try { localStorage.removeItem(STORAGE); } catch {}
+      storageStatus('Browser storage unavailable or full. Bob’s new keys still work in this tab; the saved entry could not be updated.');
+    }
+  }
+  el('clear-storage').addEventListener('click', () => {
+    try { localStorage.removeItem(STORAGE); storageStatus('Saved RSA public-key entry removed. Current in-memory keys are unchanged.'); }
+    catch { storageStatus('Could not remove the stored entry. Clear it manually in Application → Local Storage.'); }
+  });
+  try {
+    storageStatus(localStorage.getItem(STORAGE)
+      ? 'A public-key demo entry is saved under ' + STORAGE + '. It does not restore Bob’s private key; generate a fresh pair to use this demo.'
+      : 'Generate Bob’s keys to save his public key in Application → Local Storage.');
+  } catch { storageStatus('Local Storage is unavailable. The RSA demo still works in this tab.'); }
+
   let keys = null, ciphertext = null, original = '', busy = false, epoch = 0, pythonController = null;
   const active = () => document.body.dataset.task === 'rsa';
   const bytes = () => encoder.encode(el('message').value);
@@ -62,6 +87,7 @@
     keys = pair;
     const encoded = base64(publicBytes);
     el('public').textContent = '-----BEGIN PUBLIC KEY-----\n' + encoded.match(/.{1,64}/g).join('\n') + '\n-----END PUBLIC KEY-----';
+    persistPublicKey(el('public').textContent);
     status('Keys ready. Alice can now encrypt a message using Bob’s public key.');
   }));
   el('encrypt').addEventListener('click', () => operation(async current => {
