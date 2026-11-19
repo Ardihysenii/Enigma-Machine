@@ -1,0 +1,87 @@
+<section id="key-houses" class="kh" hidden aria-labelledby="kh-heading">
+  <div class="kh-intro"><div><p class="kh-kicker">THE KEYKEEPER’S GARDEN / INTERACTIVE LAB</p><h2 id="kh-heading">One key. Only one home.</h2><p>Pack a disposable private key, protect it with a password, then try the doors. Python checks a signed challenge against each house’s public key. The doors move only after that check.</p></div><span class="kh-seal">RSA<br><b>2048</b><small>DISPOSABLE KEYS</small></span></div>
+  <div class="kh-landscape"><div class="kh-scene-caption"><span>01 / CHOOSE A HOUSE</span><span>Three public keys · one matching private key</span></div><div id="kh-houses" class="kh-houses"></div><div class="kh-ground"><span>YOUR KEY’S NEIGHBOURHOOD</span><span>Illustration, not physical access control</span></div></div>
+  <div class="kh-workbench"><article class="kh-card"><p class="kh-kicker">02 / MAKE YOUR KEY</p><h3>Pack once. Test both containers.</h3><p>Generate one fresh key and a self-signed certificate. Both encrypted containers carry the same key, belonging to House 01.</p><form id="kh-generate"><label for="kh-new-password">New disposable password <span>12–128 characters</span></label><input id="kh-new-password" type="password" minlength="12" maxlength="128" required autocomplete="new-password" placeholder="Use a password you do not use elsewhere"><button class="kh-primary" type="submit">Create encrypted key set <span>↗</span></button></form><p id="kh-storage" class="kh-small" role="status">No saved key set in this browser.</p><div class="kh-downloads"><button type="button" data-kh-download="private-key.pem">↓ Key .pem</button><button type="button" data-kh-download="bundle.p12">↓ Bundle .p12</button><button type="button" data-kh-download="certificate.pem">↓ Certificate .pem</button></div></article>
+  <article class="kh-card"><p class="kh-kicker">03 / TRY THE LOCK</p><h3 id="kh-target-heading">Open House 01</h3><form id="kh-open"><fieldset class="kh-formats"><legend>Choose your encrypted container</legend><label class="kh-format"><input type="radio" name="kh-format" value="pkcs8" checked><span class="kh-box-icon" aria-hidden="true">▣</span><span><b>PKCS #8 / Key box</b><small>Encrypted private key only</small></span></label><label class="kh-format"><input type="radio" name="kh-format" value="pkcs12"><span class="kh-box-icon" aria-hidden="true">▤</span><span><b>PKCS #12 / Key + certificate suitcase</b><small>Encrypted key and its certificate</small></span></label></fieldset><label for="kh-test-password">Password for this container</label><input id="kh-test-password" type="password" maxlength="128" required autocomplete="off" placeholder="Try the right password, then a wrong one"><button class="kh-primary" type="submit">Test selected door <span>→</span></button></form><p class="kh-small">A wrong password cannot load the key. A correct password loads it, but Houses 02 and 03 still reject its signature.</p></article></div>
+  <div id="kh-status" class="kh-status" role="status" aria-live="polite">Start by creating a disposable key set.</div>
+  <section class="kh-evidence kh-card" aria-labelledby="kh-evidence-heading"><div class="kh-section-head"><div><p class="kh-kicker">04 / EVIDENCE, NOT GUESSWORK</p><h3 id="kh-evidence-heading">The redacted test record</h3></div><div class="kh-tools"><button type="button" id="kh-log-download">↓ Download log .txt</button><button type="button" id="kh-clear">Clear saved demo</button></div></div><dl id="kh-metadata" class="kh-metadata"></dl><pre id="kh-log" tabindex="0" aria-label="Redacted operation log">No operations yet. Passwords and key contents never appear here.</pre></section>
+  <div class="kh-notes"><article><h3>Four standards, different jobs.</h3><dl><dt>PKCS #1</dt><dd>RSA key formats and algorithms. It is not a certificate suitcase.</dd><dt>PKCS #8</dt><dd>A private-key container. This lab encrypts it with your password.</dd><dt>PKCS #11</dt><dd>An interface to cryptographic tokens, such as smart cards. Not implemented here.</dd><dt>PKCS #12</dt><dd>A password-protected bundle for a private key and certificate.</dd></dl></article><article><h3>What this demo does not prove.</h3><p>A self-signed certificate is not trusted identity evidence. Check its fingerprint and expiry, but do not use it to identify a real person or service.</p><p>Signing a challenge verifies a key match. This is not a physical lock, a smart card or production authentication.</p><p class="kh-warning"><b>Lab-only browser storage.</b> This browser saves encrypted files, public keys and certificate metadata, never the password or decrypted key. Same-origin scripts can read or copy those encrypted files; offline password guessing is possible. Use disposable passwords. Clear the demo when finished. Clearing here does not delete downloaded copies or server files.</p></article></div>
+  <details class="kh-code"><summary>Inspect the Python packaging code used by this lab</summary><p>Source snapshot from <code>services.py</code>. The server generates real encrypted artifacts and checks recovery and wrong-password rejection; the browser does not simulate those outcomes.</p><pre><code>def packaging(p, state):
+    # Only encrypted laboratory artifacts travel to/from browser storage.
+    if p.get('action') == 'open':
+        password = text(p, 'password', limit=128).encode('utf-8')
+        artifact = text(p, 'artifact', limit=16000)
+        try:
+            if p.get('format') == 'pkcs8':
+                private = serialization.load_pem_private_key(artifact.encode('ascii'), password)
+                certificate_matches = None
+            elif p.get('format') == 'pkcs12':
+                private, certificate, _ = pkcs12.load_key_and_certificates(
+                    base64.b64decode(artifact, validate=True), password)
+                if private is None or certificate is None:
+                    raise ValueError('Missing key or certificate.')
+                certificate_matches = private.public_key().public_numbers() == certificate.public_key().public_numbers()
+            else:
+                raise ValueError('Unknown container.')
+            if not isinstance(private, rsa.RSAPrivateKey):
+                raise ValueError('Expected an RSA laboratory key.')
+        except (ValueError, TypeError, UnicodeError):
+            raise ValueError('Incorrect password or invalid encrypted package.') from None
+        try:
+            public = serialization.load_pem_public_key(text(p, 'public_key', limit=2000).encode('ascii'))
+            if not isinstance(public, rsa.RSAPublicKey):
+                raise ValueError('Expected an RSA public key.')
+        except (ValueError, TypeError, UnicodeError):
+            raise ValueError('Invalid house public key.') from None
+        # Actual signature verification, not a browser-side house-ID comparison.
+        challenge = secrets.token_bytes(32)
+        signature = private.sign(challenge, padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                                 salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+        return {'opened': verifies(public, signature, challenge), 'key_loaded': True,
+                'certificate_matches': certificate_matches,
+                'operation': 'RSA-PSS challenge verification; educational key-match demo only'}
+    password = text(p, 'password', limit=128)
+    if len(password) &lt; 12:
+        raise ValueError('Use a disposable laboratory password of 12-128 characters.')
+    secret = password.encode('utf-8')
+    private = keypair()
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'ENIGMA disposable laboratory certificate')])
+    now = datetime.now(timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(private.public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(minutes=1))
+            .not_valid_after(now + timedelta(days=7)).add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .sign(private, hashes.SHA256()))
+    pem = private.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.BestAvailableEncryption(secret))
+    bundle = pkcs12.serialize_key_and_certificates(b'enigma-lab', private, cert, None, serialization.BestAvailableEncryption(secret))
+    restored = serialization.load_pem_private_key(pem, password=secret)
+    restored12, cert12, _ = pkcs12.load_key_and_certificates(bundle, secret)
+    wrong = b'deliberately-wrong-' + secrets.token_hex(16).encode('ascii')
+    failures = []
+    for loader, value in [(serialization.load_pem_private_key, pem), (pkcs12.load_key_and_certificates, bundle)]:
+        try:
+            loader(value, wrong)
+            failures.append(False)
+        except ValueError:
+            failures.append(True)
+    identifier = secrets.token_hex(16)
+    folder = ROOT / state['id']
+    folder.mkdir(parents=True, exist_ok=True)
+    files = {'private-key.pem': pem, 'bundle.p12': bundle, 'certificate.pem': cert.public_bytes(serialization.Encoding.PEM)}
+    links = {}
+    for filename, data in files.items():
+        path = folder / (identifier + '-' + filename)
+        path.write_bytes(data)
+        token = secrets.token_urlsafe(24)
+        state['downloads'][token] = (path, filename)
+        links[filename] = '/api/download/' + token
+    public = private.public_key().public_numbers()
+    house_public_keys = [key.public_bytes(serialization.Encoding.PEM,
+                         serialization.PublicFormat.SubjectPublicKeyInfo).decode('ascii')
+                         for key in (private.public_key(), keypair().public_key(), keypair().public_key())]
+    return {'house_public_keys': house_public_keys, 'downloads': links, 'pkcs8_recovered': restored.public_key().public_numbers() == public,
+            'pkcs12_recovered': restored12.public_key().public_numbers() == public and cert12.fingerprint(hashes.SHA256()) == cert.fingerprint(hashes.SHA256()),
+            'wrong_password_rejected_pkcs8': failures[0], 'wrong_password_rejected_pkcs12': failures[1],
+            'certificate_sha256': cert.fingerprint(hashes.SHA256()).hex(), 'valid_until': cert.not_valid_after_utc.isoformat(),
+            'standards': {'PKCS #1': 'RSA key format and algorithms', 'PKCS #8': 'Private-key storage; encrypted here', 'PKCS #11': 'Interface for cryptographic tokens; not implemented by this simulation', 'PKCS #12': 'Password-protected key and certificate bundle'},
+            'warning': 'Self-signed test certificate: not trusted identity evidence. Only encrypted private-key artifacts are saved. Keep your disposable password locally; it is not saved. Downloads require this browser session. Server restart discards access links.'}</code></pre></details>
+</section>
