@@ -5,14 +5,19 @@ const {webcrypto} = require('node:crypto');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const source = fs.readFileSync(path.join(__dirname, '../static/rsa-demo.js'), 'utf8');
-function harness({supported = true, fetcher} = {}) {
+function harness({supported = true, fetcher, storage = new Map(), storageFails = false} = {}) {
+  const localStorage = {
+    getItem(key) { if (storageFails) throw Error('blocked'); return storage.get(key) ?? null; },
+    setItem(key, value) { if (storageFails) throw Error('blocked'); storage.set(key, value); },
+    removeItem(key) { if (storageFails) throw Error('blocked'); storage.delete(key); }
+  };
   const elements = new Map(), events = {};
   const get = id => {
     if (!elements.has(id)) elements.set(id, {value:id === 'rsa-message' ? 'The exam is in Room 204.' : '', textContent:'', disabled:false, hidden:false, className:'', listeners:{}, addEventListener(name, fn){this.listeners[name] = fn;}});
     return elements.get(id);
   };
   const document = {body:{dataset:{task:'rsa'}}, getElementById:get, addEventListener(name, fn){events[name] = fn;}};
-  const context = vm.createContext({document, crypto:supported ? webcrypto : undefined, TextEncoder, TextDecoder, Uint8Array, btoa, setTimeout, clearTimeout, AbortController, fetch:fetcher});
+  const context = vm.createContext({document, localStorage, crypto:supported ? webcrypto : undefined, TextEncoder, TextDecoder, Uint8Array, btoa, setTimeout, clearTimeout, AbortController, fetch:fetcher});
   vm.runInContext(source, context);
   return {get, document, events, click: id => get('rsa-' + id).listeners.click(), input: text => {get('rsa-message').value=text; get('rsa-message').listeners.input();}};
 }
@@ -75,4 +80,35 @@ test('original Python self-test remains separate from Bob browser state', async 
   assert.equal(JSON.parse(request.options.body).message, 'The exam is in Room 204.');
   assert.equal(h.get('rsa-ciphertext').value, ''); assert.equal(h.get('rsa-decrypt').disabled, true);
   assert.equal(JSON.parse(h.get('rsa-python-output').textContent).recovery_matches, true);
+});
+
+const STORAGE = 'enigma.rsa.bob-public-key.v1';
+test('generation stores only the displayed SPKI public key and safe metadata', async () => {
+  const storage = new Map([['unrelated', 'keep']]); const h = harness({storage});
+  assert.equal(storage.has(STORAGE), false);
+  await h.click('generate');
+  const record = JSON.parse(storage.get(STORAGE));
+  assert.deepEqual(Object.keys(record).sort(), ['version','owner','algorithm','modulusLength','hash','format','publicKeyPem','createdAt','note'].sort());
+  assert.equal(record.publicKeyPem, h.get('rsa-public').textContent);
+  assert.match(record.publicKeyPem, /BEGIN PUBLIC KEY/);
+  assert.doesNotMatch(storage.get(STORAGE), /BEGIN PRIVATE KEY|BEGIN RSA PRIVATE KEY/);
+  const old = record.publicKeyPem;
+  await h.click('generate'); assert.notEqual(JSON.parse(storage.get(STORAGE)).publicKeyPem, old);
+  await h.click('reset'); assert.equal(storage.has(STORAGE), true);
+  const reloaded = harness({storage});
+  assert.match(reloaded.get('rsa-storage-status').textContent, /does not restore/);
+  assert.equal(reloaded.get('rsa-encrypt').disabled, true);
+  await reloaded.click('clear-storage');
+  assert.equal(storage.has(STORAGE), false); assert.equal(storage.get('unrelated'), 'keep');
+});
+test('blocked storage does not stop real RSA encryption and decryption', async () => {
+  const h = harness({storageFails:true}); await h.click('generate');
+  assert.match(h.get('rsa-storage-status').textContent, /unavailable or full/);
+  await h.click('encrypt'); await h.click('decrypt');
+  assert.equal(h.get('rsa-recovered').textContent, 'The exam is in Room 204.');
+});
+test('cancelled key generation does not save a stale public key', async () => {
+  const storage = new Map(); const h = harness({storage});
+  const pending = h.click('generate'); await h.click('reset'); await pending;
+  assert.equal(storage.has(STORAGE), false);
 });
