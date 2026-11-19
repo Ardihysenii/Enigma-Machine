@@ -18,6 +18,14 @@ class KeyHousesTests(unittest.TestCase):
             self.assertTrue(result['wrong_password_rejected_pkcs12'])
             self.assertEqual(len(result['house_public_keys']), 3)
             artifacts = {name: path.read_bytes() for path, name in state['downloads'].values()}
+            self.assertEqual(result['artifacts']['pkcs8'], artifacts['private-key.pem'].decode())
+            self.assertEqual(base64.b64decode(result['artifacts']['pkcs12']), artifacts['bundle.p12'])
+            self.assertEqual(result['artifacts']['certificate'], artifacts['certificate.pem'].decode())
+            self.assertNotIn('disposable-test-only', str(result))
+            # Simulate generation and opening on different workers with no shared state.
+            state = {'id': 'different-worker', 'downloads': {}}
+            artifacts = {'private-key.pem': result['artifacts']['pkcs8'].encode(),
+                         'bundle.p12': base64.b64decode(result['artifacts']['pkcs12'])}
             self.assertTrue(artifacts['private-key.pem'].startswith(b'-----BEGIN ENCRYPTED PRIVATE KEY-----'))
             for fmt, artifact in [('pkcs8', artifacts['private-key.pem'].decode()),
                                   ('pkcs12', base64.b64encode(artifacts['bundle.p12']).decode())]:
