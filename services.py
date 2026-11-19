@@ -243,7 +243,11 @@ def packaging(p, state):
     house_public_keys = [key.public_bytes(serialization.Encoding.PEM,
                          serialization.PublicFormat.SubjectPublicKeyInfo).decode('ascii')
                          for key in (private.public_key(), keypair().public_key(), keypair().public_key())]
-    return {'house_public_keys': house_public_keys, 'downloads': links, 'pkcs8_recovered': restored.public_key().public_numbers() == public,
+    # Carry encrypted files in the generation response: cloud workers do not share
+    # in-memory download tokens or local files. Never include an unencrypted key.
+    artifacts = {'pkcs8': pem.decode('ascii'), 'pkcs12': base64.b64encode(bundle).decode('ascii'),
+                 'certificate': cert.public_bytes(serialization.Encoding.PEM).decode('ascii')}
+    return {'artifacts': artifacts, 'house_public_keys': house_public_keys, 'downloads': links, 'pkcs8_recovered': restored.public_key().public_numbers() == public,
             'pkcs12_recovered': restored12.public_key().public_numbers() == public and cert12.fingerprint(hashes.SHA256()) == cert.fingerprint(hashes.SHA256()),
             'wrong_password_rejected_pkcs8': failures[0], 'wrong_password_rejected_pkcs12': failures[1],
             'certificate_sha256': cert.fingerprint(hashes.SHA256()).hex(), 'valid_until': cert.not_valid_after_utc.isoformat(),
