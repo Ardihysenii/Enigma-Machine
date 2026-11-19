@@ -172,6 +172,39 @@ def signatures(p, state):
 
 
 def packaging(p, state):
+    # Only encrypted laboratory artifacts travel to/from browser storage.
+    if p.get('action') == 'open':
+        password = text(p, 'password', limit=128).encode('utf-8')
+        artifact = text(p, 'artifact', limit=16000)
+        try:
+            if p.get('format') == 'pkcs8':
+                private = serialization.load_pem_private_key(artifact.encode('ascii'), password)
+                certificate_matches = None
+            elif p.get('format') == 'pkcs12':
+                private, certificate, _ = pkcs12.load_key_and_certificates(
+                    base64.b64decode(artifact, validate=True), password)
+                if private is None or certificate is None:
+                    raise ValueError('Missing key or certificate.')
+                certificate_matches = private.public_key().public_numbers() == certificate.public_key().public_numbers()
+            else:
+                raise ValueError('Unknown container.')
+            if not isinstance(private, rsa.RSAPrivateKey):
+                raise ValueError('Expected an RSA laboratory key.')
+        except (ValueError, TypeError, UnicodeError):
+            raise ValueError('Incorrect password or invalid encrypted package.') from None
+        try:
+            public = serialization.load_pem_public_key(text(p, 'public_key', limit=2000).encode('ascii'))
+            if not isinstance(public, rsa.RSAPublicKey):
+                raise ValueError('Expected an RSA public key.')
+        except (ValueError, TypeError, UnicodeError):
+            raise ValueError('Invalid house public key.') from None
+        # Actual signature verification, not a browser-side house-ID comparison.
+        challenge = secrets.token_bytes(32)
+        signature = private.sign(challenge, padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                                 salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
+        return {'opened': verifies(public, signature, challenge), 'key_loaded': True,
+                'certificate_matches': certificate_matches,
+                'operation': 'RSA-PSS challenge verification; educational key-match demo only'}
     password = text(p, 'password', limit=128)
     if len(password) < 12:
         raise ValueError('Use a disposable laboratory password of 12-128 characters.')
@@ -207,7 +240,10 @@ def packaging(p, state):
         state['downloads'][token] = (path, filename)
         links[filename] = '/api/download/' + token
     public = private.public_key().public_numbers()
-    return {'downloads': links, 'pkcs8_recovered': restored.public_key().public_numbers() == public,
+    house_public_keys = [key.public_bytes(serialization.Encoding.PEM,
+                         serialization.PublicFormat.SubjectPublicKeyInfo).decode('ascii')
+                         for key in (private.public_key(), keypair().public_key(), keypair().public_key())]
+    return {'house_public_keys': house_public_keys, 'downloads': links, 'pkcs8_recovered': restored.public_key().public_numbers() == public,
             'pkcs12_recovered': restored12.public_key().public_numbers() == public and cert12.fingerprint(hashes.SHA256()) == cert.fingerprint(hashes.SHA256()),
             'wrong_password_rejected_pkcs8': failures[0], 'wrong_password_rejected_pkcs12': failures[1],
             'certificate_sha256': cert.fingerprint(hashes.SHA256()).hex(), 'valid_until': cert.not_valid_after_utc.isoformat(),
