@@ -47,9 +47,6 @@
       const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = text; $('metadata').append(dt, dd);
     }
   }
-  function bytesToBase64(buffer) {
-    const bytes = new Uint8Array(buffer); let binary = ''; for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]); return btoa(binary);
-  }
   function saveBlob(blob, filename) {
     const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = filename; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
@@ -61,13 +58,6 @@
       throw new Error('Python rejected the request (HTTP ' + response.status + '). Check the local server and retry.');
     }
     return data;
-  }
-  async function downloadBytes(url) {
-    const target = new URL(url, location.origin);
-    if (target.origin !== location.origin || !target.pathname.startsWith('/api/download/')) throw new Error('Unexpected artifact download link. No files saved.');
-    const response = await fetch(target.href, {cache: 'no-store', signal: AbortSignal.timeout(30000)});
-    if (!response.ok) throw new Error('An encrypted artifact could not be downloaded. Create the key set again.');
-    const bytes = await response.arrayBuffer(); if (bytes.byteLength > 100000 || !bytes.byteLength) throw new Error('Unexpected artifact size. No files saved.'); return bytes;
   }
   function failure(error, operation) {
     const known = error instanceof Error ? error.message : '';
@@ -81,11 +71,9 @@
     busy = true; updateControls(); status('Python is generating and checking both encrypted containers…');
     try {
       const pending = api({password}); password = ''; const result = await pending;
-      if (!result.downloads || !Array.isArray(result.house_public_keys)) throw new Error('Unexpected artifact response. No files saved.');
-      // Copy all three downloads now, before session-bound links can expire.
-      const [pem, p12, cert] = await Promise.all(['private-key.pem', 'bundle.p12', 'certificate.pem'].map(name => downloadBytes(result.downloads[name])));
-      const decoder = new TextDecoder();
-      const next = validate({version: 1, pkcs8: decoder.decode(pem), pkcs12: bytesToBase64(p12), certificate: decoder.decode(cert), publicKeys: result.house_public_keys, fingerprint: result.certificate_sha256, validUntil: result.valid_until, checks: Object.fromEntries(checks.map(k => [k, result[k]]))});
+      if (!result.artifacts || !Array.isArray(result.house_public_keys)) throw new Error('The server returned an unreadable response. Restart or update the Python server, then retry.');
+      // Encrypted bytes arrive atomically with generation; no worker-local links.
+      const next = validate({version: 1, pkcs8: result.artifacts.pkcs8, pkcs12: result.artifacts.pkcs12, certificate: result.artifacts.certificate, publicKeys: result.house_public_keys, fingerprint: result.certificate_sha256, validUntil: result.valid_until, checks: Object.fromEntries(checks.map(k => [k, result[k]]))});
       saved = next; log = []; resetDoors(); showMetadata();
       record('Generated disposable RSA key; copied encrypted PKCS #8, PKCS #12 and certificate bytes. Key contents redacted.');
       checks.forEach(k => record('Python check ' + k + ': ' + saved.checks[k]));
